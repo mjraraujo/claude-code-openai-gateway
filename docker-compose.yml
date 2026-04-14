@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  llm-proxy:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - TARGET_API_URL=${TARGET_API_URL}
+    restart: unless-stopped
+    env_file:
+      - .env
