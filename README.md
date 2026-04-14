@@ -23,7 +23,7 @@ npm install
 # 3. Link globally (Optional, allows running from anywhere)
 npm link
 
-# 4. Make sure you have cloud installed.
+# 4. Make sure you have Claude installed.
 ```
 
 
