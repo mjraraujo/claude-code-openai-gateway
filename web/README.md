@@ -64,12 +64,38 @@ web/
 ## Roadmap
 
 The full Mission Control specification lives in the project description.
-The next planned milestones are:
+Progress so far:
 
-1. **Authentication** — web login screen wired to the gateway's device-
-   code flow, persisting the dummy `sk-ant-…` token used to authorise
-   browser sessions against the proxy.
-2. **Layout** — left Kanban panel, centre terminal + Monaco workspace,
-   right agent/model panel.
-3. **Advanced features** — `ruflo` preload, harness controls,
-   departments, Full Auto Drive.
+- [x] **Step 2 — Scaffold** — Next.js 16 (App Router) + TypeScript + Tailwind v4
+- [x] **Step 3 — Authentication** — `/login` page wired to OpenAI's
+      device-code flow via `POST /api/auth/login/{start,poll}`. Tokens
+      land in `~/.codex-gateway/token.json` (shared with the CLI
+      gateway). HttpOnly cookie session backed by a persisted dummy
+      `sk-ant-…` key in `~/.codex-gateway/session-key.json`. A Next.js
+      Proxy (`src/proxy.ts`, formerly Middleware) gates every page
+      behind that cookie.
+- [x] **Step 4 — Mission Control layout shells** — three-panel grid
+      under a top status bar. Left: Kanban + sprint/methodology/dev-mode
+      toggles. Centre: tabbed workspace (Terminal / Workspace /
+      Side-by-Side). Right: agent orchestration, model selector,
+      harness toggles, departments, and a Full Auto Drive engagement
+      button with a confirmation modal.
+- [ ] **Step 5 — Real interactivity** — wire `@monaco-editor/react` for
+      the Workspace tab and a WebSocket-backed PTY (e.g. `xterm.js` +
+      `node-pty`) for the Terminal tab.
+- [ ] `ruflo` preload, harness control plane, Departments & cron
+      runners, Full Auto Drive execution loop with guardrails.
+
+## Architecture notes
+
+- **Auth state is shared with the CLI.** The web app reads and writes
+  the same `~/.codex-gateway/token.json` file as `bin/gateway.js`, so
+  signing in via either surface authorises the other.
+- **Edge-safe proxy.** `src/proxy.ts` only checks for cookie presence;
+  the full constant-time comparison against the on-disk key happens in
+  Node-runtime API routes (`src/lib/auth/session.ts`). Forged cookies
+  cannot reach authenticated endpoints.
+- **No real LLM calls from the browser.** The dashboard talks to its
+  own Next.js API routes (server-side), which talk to OpenAI / the
+  local proxy. The dummy `sk-ant-…` key is the same value Claude Code
+  presents to the gateway, keeping a single credential across surfaces.
