@@ -45,3 +45,12 @@ node bin/gateway.js
 
 ## Disclaimer
 Note: This relies on internal OpenAI API endpoints (`/backend-api/codex/responses`). Ensure you comply with OpenAI's Terms of Service. Changes to Anthropic's CLI or OpenAI's API schema may break this gateway.
+
+## Mission Control web dashboard (preview)
+
+A web-based "Mission Control" dashboard is being built alongside the
+gateway in [`web/`](./web/). It is a Next.js + TypeScript + TailwindCSS
+application that will provide a graphical front end for login, task
+management, an embedded terminal/Monaco workspace, and agent
+orchestration. The current state is an initial scaffold — see
+[`web/README.md`](./web/README.md) for setup and the roadmap.
