@@ -1,0 +1,72 @@
+name: Deploy docs to GitHub Pages
+
+# Builds a small static documentation site from the repository's README
+# and publishes it to GitHub Pages. The application itself is a
+# Next.js + Node service and cannot run on Pages (which is static-only),
+# so this workflow only ships docs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, but don't cancel an in-progress
+# run — let it finish so we don't leave Pages in a half-deployed state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble Jekyll site
+        run: |
+          set -euo pipefail
+          mkdir -p _site_src
+          # Copy README as the site's homepage. Jekyll renders README.md
+          # by default when no index.md is present, but copying makes
+          # the source directory self-contained and easy to extend later.
+          cp README.md _site_src/index.md
+          if [ -d docs ]; then
+            cp -R docs _site_src/docs
+          fi
+          cat > _site_src/_config.yml <<'YAML'
+          title: claude-code-openai-gateway
+          description: Documentation for the claude-code-openai-gateway project.
+          theme: jekyll-theme-cayman
+          YAML
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./_site_src
+          destination: ./_site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
