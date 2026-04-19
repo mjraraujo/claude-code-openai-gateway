@@ -1,31 +1,43 @@
-version: '3.8'
-
 # Mission Control container exposes:
-#   - 3000  : Next.js dashboard (login + UI)
+#   - 3000  : Next.js dashboard (login + UI)         — bind to your reverse proxy
 #   - 18923 : Codex gateway proxy (Anthropic ↔ OpenAI translation)
+#            — bound to 127.0.0.1 by default so it is NOT public on a VPS.
+#              The dashboard talks to it over container loopback regardless.
+#              If you want to use the gateway from the host's Claude Code
+#              CLI, 127.0.0.1:18923 on the host is fine. Do NOT publish
+#              this port on 0.0.0.0 — there is no auth on the proxy.
 #
-# A named volume keeps the OAuth token + mission-control state
+# A named volume keeps the OAuth token + Mission Control state
 # (~/.codex-gateway inside the container) across restarts so users
 # only have to log in once.
 
 services:
   mission-control:
+    # Build locally from the checked-out source by default.
     build: .
+    # Or, on a VPS, pull the prebuilt image from GHCR instead and remove
+    # the `build:` line above:
+    #
+    #   image: ghcr.io/mjraraujo/claude-code-openai-gateway:latest
+    #
+    # (Published by .github/workflows/docker.yml on every push to main.)
     ports:
-      - "3000:3000"
-      - "18923:18923"
+      # Dashboard. Bind to localhost when fronted by a reverse proxy on
+      # the same host (recommended) — change to "3000:3000" if you front
+      # it from another machine, but always terminate TLS upstream.
+      - "127.0.0.1:3000:3000"
+      # Gateway proxy — loopback only. NEVER expose publicly.
+      - "127.0.0.1:18923:18923"
     environment:
-      # The dashboard talks to the in-container gateway over loopback.
-      MISSION_CONTROL_GATEWAY_URL: http://127.0.0.1:18923/v1/chat/completions
       # Workspace for the embedded fs/exec tools. Override to mount a
       # repo from the host (see the volume below).
       MISSION_CONTROL_WORKSPACE: /workspace
-      NODE_ENV: production
     volumes:
       # Persist OAuth token + Mission Control state.
       - mission-control-state:/root/.codex-gateway
       # Mount the host workspace read-write so the dashboard's
-      # filesystem and exec tools operate against your project.
+      # filesystem and exec tools operate against your project. The
+      # ./workspace directory is auto-created on first `up` if missing.
       - ./workspace:/workspace
     restart: unless-stopped
     healthcheck:
