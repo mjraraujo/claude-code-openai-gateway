@@ -1,9 +1,9 @@
-# fly.toml app configuration file generated for app-damp-cloud-3494 on 2026-04-19T04:21:34Z
+# fly.toml app configuration file generated for app-still-pine-1384 on 2026-04-19T04:28:46Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'app-damp-cloud-3494'
+app = 'app-still-pine-1384'
 primary_region = 'iad'
 
 [build]
