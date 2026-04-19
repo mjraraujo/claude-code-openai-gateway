@@ -1,12 +1,39 @@
 version: '3.8'
 
+# Mission Control container exposes:
+#   - 3000  : Next.js dashboard (login + UI)
+#   - 18923 : Codex gateway proxy (Anthropic ↔ OpenAI translation)
+#
+# A named volume keeps the OAuth token + mission-control state
+# (~/.codex-gateway inside the container) across restarts so users
+# only have to log in once.
+
 services:
-  llm-proxy:
+  mission-control:
     build: .
     ports:
       - "3000:3000"
+      - "18923:18923"
     environment:
-      - TARGET_API_URL=${TARGET_API_URL}
+      # The dashboard talks to the in-container gateway over loopback.
+      MISSION_CONTROL_GATEWAY_URL: http://127.0.0.1:18923/v1/chat/completions
+      # Workspace for the embedded fs/exec tools. Override to mount a
+      # repo from the host (see the volume below).
+      MISSION_CONTROL_WORKSPACE: /workspace
+      NODE_ENV: production
+    volumes:
+      # Persist OAuth token + Mission Control state.
+      - mission-control-state:/root/.codex-gateway
+      # Mount the host workspace read-write so the dashboard's
+      # filesystem and exec tools operate against your project.
+      - ./workspace:/workspace
     restart: unless-stopped
-    env_file:
-      - .env
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/auth/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  mission-control-state:

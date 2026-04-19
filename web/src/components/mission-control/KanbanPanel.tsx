@@ -1,0 +1,399 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+import type {
+  RuntimeState,
+  Task,
+  TaskColumn,
+} from "@/lib/runtime";
+
+const COLUMNS: { id: TaskColumn; title: string }[] = [
+  { id: "backlog", title: "Backlog" },
+  { id: "active", title: "Active Sprint" },
+  { id: "review", title: "In Review" },
+  { id: "shipped", title: "Shipped" },
+];
+
+const METHODOLOGIES = ["Shape Up", "Scrum", "Kanban", "Spec-First"] as const;
+const DEV_MODES = ["Vibe Code", "Spec Driven"] as const;
+
+export function KanbanPanel() {
+  const [state, setState] = useState<RuntimeState | null>(null);
+  const [methodology, setMethodology] =
+    useState<(typeof METHODOLOGIES)[number]>("Shape Up");
+  const [devMode, setDevMode] =
+    useState<(typeof DEV_MODES)[number]>("Spec Driven");
+  const [addingTitle, setAddingTitle] = useState("");
+  const [addingColumn, setAddingColumn] = useState<TaskColumn>("backlog");
+  const [addingTag, setAddingTag] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
+  const addInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const es = new EventSource("/api/runtime/state");
+    es.addEventListener("state", (ev) => {
+      try {
+        setState(JSON.parse((ev as MessageEvent).data) as RuntimeState);
+      } catch {
+        /* ignore */
+      }
+    });
+    return () => es.close();
+  }, []);
+
+  useEffect(() => {
+    if (showAdd) addInputRef.current?.focus();
+  }, [showAdd]);
+
+  const tasks = state?.tasks ?? [];
+  const autoDriveCurrent = state?.autoDrive.current;
+
+  const moveCard = async (id: string, column: TaskColumn) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/runtime/tasks", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, column }),
+      });
+      if (!res.ok) throw new Error(`move failed (${res.status})`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteCard = async (id: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fetch("/api/runtime/tasks", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addCard = async () => {
+    const title = addingTitle.trim();
+    if (!title) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/runtime/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          column: addingColumn,
+          tag: addingTag.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(`create failed (${res.status})`);
+      setAddingTitle("");
+      setAddingTag("");
+      setShowAdd(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runCard = async (task: Task) => {
+    if (autoDriveCurrent) {
+      setError("auto-drive already running — stop it first");
+      return;
+    }
+    setRunningTaskId(task.id);
+    setError(null);
+    try {
+      // 1. Move to active sprint while it runs.
+      await fetch("/api/runtime/tasks", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: task.id, column: "active" }),
+      });
+      // 2. Start auto-drive with the card title as the goal.
+      const res = await fetch("/api/runtime/auto-drive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", goal: task.title, maxSteps: 8 }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || `start failed (${res.status})`);
+      }
+      const { run } = (await res.json()) as { run?: { id?: string } };
+      // 3. Record the run id on the card.
+      if (run?.id) {
+        await fetch("/api/runtime/tasks", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: task.id, runId: run.id }),
+        });
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRunningTaskId(null);
+    }
+  };
+
+  return (
+    <aside className="flex h-full w-full flex-col gap-3 overflow-hidden border-r border-zinc-900 bg-black p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-zinc-200">Tasks &amp; Sprints</h2>
+        <button
+          type="button"
+          onClick={() => setShowAdd((v) => !v)}
+          className="rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
+        >
+          {showAdd ? "× cancel" : "+ New"}
+        </button>
+      </div>
+
+      {showAdd && (
+        <div className="flex flex-col gap-2 rounded-md border border-zinc-800 bg-zinc-950 p-2.5">
+          <input
+            ref={addInputRef}
+            value={addingTitle}
+            onChange={(e) => setAddingTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void addCard();
+              if (e.key === "Escape") setShowAdd(false);
+            }}
+            placeholder="Card title…"
+            className="w-full rounded border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+          />
+          <div className="flex gap-2">
+            <select
+              value={addingColumn}
+              onChange={(e) => setAddingColumn(e.target.value as TaskColumn)}
+              className="flex-1 rounded border border-zinc-800 bg-black px-2 py-1 text-xs text-zinc-200"
+            >
+              {COLUMNS.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title}
+                </option>
+              ))}
+            </select>
+            <input
+              value={addingTag}
+              onChange={(e) => setAddingTag(e.target.value.slice(0, 20))}
+              placeholder="tag"
+              className="w-20 rounded border border-zinc-800 bg-black px-2 py-1 text-xs text-zinc-200 focus:border-zinc-600 focus:outline-none"
+            />
+            <button
+              type="button"
+              disabled={!addingTitle.trim() || busy}
+              onClick={addCard}
+              className="rounded border border-zinc-800 px-3 py-1 text-xs text-zinc-200 hover:border-zinc-700 disabled:opacity-50"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-2">
+        <Selector
+          label="Methodology"
+          value={methodology}
+          options={METHODOLOGIES}
+          onChange={setMethodology}
+        />
+        <Selector
+          label="Dev mode"
+          value={devMode}
+          options={DEV_MODES}
+          onChange={setDevMode}
+        />
+      </div>
+
+      {error && (
+        <p className="font-mono text-[10px] text-red-400">{error}</p>
+      )}
+
+      <div className="flex flex-1 flex-col gap-3 overflow-y-auto pr-1">
+        {COLUMNS.map((col) => {
+          const items = tasks.filter((c) => c.column === col.id);
+          return (
+            <section key={col.id} className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                  {col.title}
+                </span>
+                <span className="font-mono text-[10px] text-zinc-600">
+                  {items.length}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {items.map((c) => (
+                  <TaskCard
+                    key={c.id}
+                    task={c}
+                    currentRunId={autoDriveCurrent?.id}
+                    runningThisCard={runningTaskId === c.id}
+                    busy={busy}
+                    onMove={moveCard}
+                    onDelete={deleteCard}
+                    onRun={runCard}
+                  />
+                ))}
+                {items.length === 0 && (
+                  <p className="rounded-md border border-dashed border-zinc-900 px-2.5 py-3 text-center text-[11px] text-zinc-600">
+                    Empty
+                  </p>
+                )}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+interface TaskCardProps {
+  task: Task;
+  currentRunId?: string;
+  runningThisCard: boolean;
+  busy: boolean;
+  onMove: (id: string, column: TaskColumn) => void;
+  onDelete: (id: string) => void;
+  onRun: (task: Task) => void;
+}
+
+function TaskCard({
+  task,
+  currentRunId,
+  runningThisCard,
+  busy,
+  onMove,
+  onDelete,
+  onRun,
+}: TaskCardProps) {
+  const [open, setOpen] = useState(false);
+  const isRunning = task.runId && task.runId === currentRunId;
+
+  return (
+    <article className="rounded-md border border-zinc-900 bg-zinc-950/60 p-2.5 transition hover:border-zinc-800">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono text-[10px] text-zinc-500">{task.id}</span>
+            {task.tag && (
+              <span className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-zinc-400">
+                {task.tag}
+              </span>
+            )}
+            {isRunning && (
+              <span className="rounded bg-red-500/20 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-red-300 animate-pulse">
+                running
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs leading-5 text-zinc-200">{task.title}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="shrink-0 rounded border border-zinc-900 px-1.5 py-0.5 text-[10px] text-zinc-600 hover:border-zinc-800 hover:text-zinc-400"
+          title="Card actions"
+        >
+          ⋯
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-2 flex flex-wrap gap-1.5 border-t border-zinc-900 pt-2">
+          {/* Move to column selector */}
+          <select
+            value={task.column}
+            disabled={busy}
+            onChange={(e) => {
+              onMove(task.id, e.target.value as TaskColumn);
+              setOpen(false);
+            }}
+            className="rounded border border-zinc-800 bg-black px-1.5 py-0.5 text-[10px] text-zinc-300 focus:outline-none"
+          >
+            {COLUMNS.map((c) => (
+              <option key={c.id} value={c.id}>
+                → {c.title}
+              </option>
+            ))}
+          </select>
+          {/* Run with auto-drive */}
+          {task.column !== "shipped" && (
+            <button
+              type="button"
+              disabled={busy || runningThisCard || !!currentRunId}
+              onClick={() => onRun(task)}
+              title={currentRunId ? "auto-drive already running" : "Run with auto-drive"}
+              className="rounded border border-emerald-900/60 px-2 py-0.5 text-[10px] text-emerald-400 hover:border-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50"
+            >
+              {runningThisCard ? "starting…" : "▶ run"}
+            </button>
+          )}
+          {/* Delete */}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              onDelete(task.id);
+              setOpen(false);
+            }}
+            className="rounded border border-red-900/60 px-2 py-0.5 text-[10px] text-red-400 hover:border-red-700 hover:bg-red-500/10 disabled:opacity-50"
+          >
+            delete
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+interface SelectorProps<T extends string> {
+  label: string;
+  value: T;
+  options: readonly T[];
+  onChange: (v: T) => void;
+}
+
+function Selector<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: SelectorProps<T>) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="rounded-md border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-200 transition hover:border-zinc-700 focus:border-zinc-600 focus:outline-none"
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
