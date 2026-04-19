@@ -37,7 +37,11 @@ export interface PlannerInput {
   goal: string;
   steps: AutoDriveStep[];
   maxStepsRemaining: number;
+  /** Model id to send to the gateway. Falls back to the default. */
+  model?: string;
 }
+
+export const DEFAULT_PLANNER_MODEL = "gpt-5.4";
 
 export async function plan(input: PlannerInput): Promise<Plan> {
   const token = await getValidToken();
@@ -93,7 +97,7 @@ async function livePlan(input: PlannerInput): Promise<Plan> {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-5.4",
+        model: input.model && input.model.trim() ? input.model : DEFAULT_PLANNER_MODEL,
         messages,
         temperature: 0.2,
         response_format: { type: "json_object" },

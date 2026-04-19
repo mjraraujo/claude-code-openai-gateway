@@ -12,6 +12,7 @@ interface Body {
   maxSteps?: unknown;
   maxWallMs?: unknown;
   maxBytes?: unknown;
+  model?: unknown;
 }
 
 /**
@@ -50,6 +51,7 @@ export async function POST(req: Request): Promise<Response> {
       maxSteps: numberOrUndef(body.maxSteps),
       maxWallMs: numberOrUndef(body.maxWallMs),
       maxBytes: numberOrUndef(body.maxBytes),
+      model: typeof body.model === "string" && body.model.trim() ? body.model : undefined,
     });
     return NextResponse.json({ run });
   } catch (err) {

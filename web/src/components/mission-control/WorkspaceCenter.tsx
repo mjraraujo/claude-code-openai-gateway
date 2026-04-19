@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { SideBySideView } from "./SideBySideView";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceView } from "./WorkspaceView";
 
@@ -50,49 +51,5 @@ export function WorkspaceCenter() {
         {tab === "side-by-side" && <SideBySideView />}
       </div>
     </section>
-  );
-}
-
-function SideBySideView() {
-  const lanes: { name: string; tint: string; line: string }[] = [
-    {
-      name: "Codex",
-      tint: "border-emerald-500/40",
-      line: "# Codex (gpt-5.4)",
-    },
-    {
-      name: "Claude Code",
-      tint: "border-orange-500/40",
-      line: "# Claude Code (sonnet-4.6)",
-    },
-    {
-      name: "Copilot",
-      tint: "border-sky-500/40",
-      line: "# GitHub Copilot",
-    },
-  ];
-  return (
-    <div className="grid h-full grid-cols-3 gap-px bg-zinc-900">
-      {lanes.map((lane) => (
-        <div key={lane.name} className="flex flex-col bg-black">
-          <div
-            className={
-              "flex items-center justify-between border-b px-3 py-2 " +
-              lane.tint
-            }
-          >
-            <span className="text-xs font-medium text-zinc-200">
-              {lane.name}
-            </span>
-            <span className="font-mono text-[10px] text-zinc-500">idle</span>
-          </div>
-          <pre className="flex-1 overflow-auto p-3 font-mono text-[11px] leading-5 text-zinc-400">
-            {lane.line}
-            {"\n"}
-            {">"} waiting for prompt…
-          </pre>
-        </div>
-      ))}
-    </div>
   );
 }

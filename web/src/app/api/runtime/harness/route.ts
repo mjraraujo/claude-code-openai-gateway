@@ -32,6 +32,13 @@ export async function PATCH(req: Request): Promise<Response> {
     if (typeof body.persistContext === "boolean") {
       draft.harness.persistContext = body.persistContext;
     }
+    if (typeof body.model === "string") {
+      const trimmed = body.model.trim();
+      // Keep the value pragmatic: short, single-line, no surprises.
+      if (trimmed && trimmed.length <= 64 && /^[\w.\-:/]+$/.test(trimmed)) {
+        draft.harness.model = trimmed;
+      }
+    }
   });
   return NextResponse.json({ harness: next.harness });
 }

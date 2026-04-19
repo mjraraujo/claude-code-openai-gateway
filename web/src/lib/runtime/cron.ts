@@ -78,6 +78,10 @@ async function runJob(dept: Department, job: CronJob): Promise<void> {
   let status: "ok" | "error" = "ok";
   let summary = "no-op";
   const maxSteps = Math.min(job.maxSteps, PER_JOB_MAX_STEPS);
+  // Read the persisted model once at job start so changes mid-run are
+  // ignored (more predictable for users tweaking the dropdown).
+  const snap = await getStore().snapshot();
+  const model = snap.harness.model;
 
   try {
     for (let i = 0; i < maxSteps; i++) {
@@ -89,6 +93,7 @@ async function runJob(dept: Department, job: CronJob): Promise<void> {
         goal: `[${dept.name} cron] ${job.prompt}`,
         steps,
         maxStepsRemaining: maxSteps - i,
+        model,
       });
       steps.push({
         index: steps.length,

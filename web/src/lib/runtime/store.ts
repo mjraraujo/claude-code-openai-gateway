@@ -36,7 +36,15 @@ export interface HarnessState {
   autoApproveSafeEdits: boolean;
   streamToolOutput: boolean;
   persistContext: boolean;
+  /**
+   * Model id used for planner / cron / auto-drive requests routed
+   * through the local gateway. Free-form string — the gateway maps it
+   * to a backend route.
+   */
+  model: string;
 }
+
+export const DEFAULT_MODEL = "gpt-5.4";
 
 export interface CronJob {
   id: string;
@@ -143,6 +151,7 @@ const DEFAULT_STATE: RuntimeState = {
     autoApproveSafeEdits: true,
     streamToolOutput: true,
     persistContext: false,
+    model: DEFAULT_MODEL,
   },
   departments: [
     { id: "engineering", name: "Engineering", cron: [] },
@@ -222,7 +231,12 @@ async function writeStateAtomic(state: RuntimeState): Promise<void> {
 function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
   const merged = structuredClone(DEFAULT_STATE);
   if (parsed.agents && Array.isArray(parsed.agents)) merged.agents = parsed.agents;
-  if (parsed.harness) merged.harness = { ...merged.harness, ...parsed.harness };
+  if (parsed.harness) {
+    merged.harness = { ...merged.harness, ...parsed.harness };
+    if (typeof parsed.harness.model !== "string" || !parsed.harness.model.trim()) {
+      merged.harness.model = DEFAULT_MODEL;
+    }
+  }
   if (parsed.departments && Array.isArray(parsed.departments)) {
     merged.departments = parsed.departments.map((d) => ({
       id: String(d.id),

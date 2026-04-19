@@ -29,6 +29,11 @@ export interface StartOptions {
   maxWallMs?: number;
   /** Defaults to 1 MB. Counts tool output bytes accumulated. */
   maxBytes?: number;
+  /**
+   * Optional override of the planner model. If omitted, the persisted
+   * `harness.model` from the store is used.
+   */
+  model?: string;
 }
 
 const DEFAULTS = {
@@ -40,7 +45,7 @@ const DEFAULTS = {
 interface ActiveLoop {
   runId: string;
   abort: AbortController;
-  options: Required<StartOptions>;
+  options: Required<Omit<StartOptions, "model">> & { model: string };
 }
 
 let active: ActiveLoop | null = null;
@@ -57,7 +62,10 @@ export async function startAutoDrive(opts: StartOptions): Promise<AutoDriveRun> 
   const goal = (opts.goal ?? "").trim();
   if (!goal) throw new Error("missing_goal");
 
-  const options: Required<StartOptions> = {
+  const initialSnap = await getStore().snapshot();
+  const model = (opts.model ?? initialSnap.harness.model ?? "").trim() || "gpt-5.4";
+
+  const options: ActiveLoop["options"] = {
     goal,
     maxSteps: clampInt(opts.maxSteps, 1, 50, DEFAULTS.maxSteps),
     maxWallMs: clampInt(
@@ -72,6 +80,7 @@ export async function startAutoDrive(opts: StartOptions): Promise<AutoDriveRun> 
       8 * 1024 * 1024,
       DEFAULTS.maxBytes,
     ),
+    model,
   };
 
   const runId = newId("drv");
@@ -136,6 +145,7 @@ async function runLoop(a: ActiveLoop): Promise<void> {
           goal: a.options.goal,
           steps: run.steps,
           maxStepsRemaining: a.options.maxSteps - stepIndex,
+          model: a.options.model,
         });
       } catch (err) {
         await appendStep(a.runId, "error", `planner error: ${(err as Error).message}`);

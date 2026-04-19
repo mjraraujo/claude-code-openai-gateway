@@ -24,7 +24,6 @@ const STATUS_COLORS = {
 } as const;
 
 export function AgentsPanel() {
-  const [model, setModel] = useState<(typeof MODELS)[number]["id"]>("gpt-5.4");
   const [state, setState] = useState<RuntimeState | null>(null);
   const [showAutoDriveModal, setShowAutoDriveModal] = useState(false);
   const [showRunLog, setShowRunLog] = useState(false);
@@ -53,6 +52,12 @@ export function AgentsPanel() {
   const departments = state?.departments ?? [];
   const currentRun = state?.autoDrive.current ?? null;
   const lastRun = state?.autoDrive.history[0] ?? null;
+  // Model is sourced from persisted harness so Kanban "▶ run" and the
+  // Engage modal both pick up whichever value was last selected here,
+  // and the value survives reloads.
+  const model = harness?.model ?? "gpt-5.4";
+  const knownModel = MODELS.find((m) => m.id === model);
+  const modelRoute = knownModel?.route ?? "custom route";
 
   const patchHarness = useCallback(
     async (patch: Partial<HarnessState>) => {
@@ -94,20 +99,25 @@ export function AgentsPanel() {
         </span>
         <select
           value={model}
-          onChange={(e) =>
-            setModel(e.target.value as (typeof MODELS)[number]["id"])
-          }
-          className="rounded-md border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-200 hover:border-zinc-700 focus:border-zinc-600 focus:outline-none"
+          disabled={!harness}
+          onChange={(e) => void patchHarness({ model: e.target.value })}
+          className="rounded-md border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-200 hover:border-zinc-700 focus:border-zinc-600 focus:outline-none disabled:opacity-50"
         >
+          {/*
+            Render the persisted model first even if it's not in the
+            preset list — guarantees the dropdown reflects state for
+            custom values set via the API.
+          */}
+          {!knownModel && (
+            <option value={model}>{model} (custom)</option>
+          )}
           {MODELS.map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
             </option>
           ))}
         </select>
-        <p className="font-mono text-[10px] text-zinc-500">
-          → {MODELS.find((m) => m.id === model)?.route}
-        </p>
+        <p className="font-mono text-[10px] text-zinc-500">→ {modelRoute}</p>
       </section>
 
       <section className="flex flex-col gap-2">

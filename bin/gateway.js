@@ -14,6 +14,7 @@
  *   node codex-gateway.js          # Login + launch
  *   node codex-gateway.js --login  # Force re-login
  *   node codex-gateway.js --setup  # Configure target model/endpoint
+ *   node codex-gateway.js --serve  # Headless: run proxy only (for Docker)
  */
 
 const http = require('http');
@@ -515,6 +516,39 @@ function startProxy(config, accessToken, accountId) {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
+/**
+ * Headless poll for a usable token written by another process (the web
+ * dashboard's device-code flow shares the same token.json). Resolves
+ * once a fresh token appears or rejects if the deadline elapses.
+ */
+async function waitForToken(maxWaitMs = 24 * 60 * 60 * 1000, intervalMs = 5000) {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    const tok = loadToken();
+    if (tok) {
+      console.log('  ✅ Token found — proceeding');
+      return tok;
+    }
+    // Try to refresh from a possibly-expired token on disk so the
+    // dashboard doesn't have to do the device-code dance for every
+    // container restart.
+    if (fs.existsSync(TOKEN_FILE)) {
+      try {
+        const oldToken = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
+        if (oldToken?.refresh_token) {
+          const refreshed = await refreshAccessToken(oldToken.refresh_token);
+          if (refreshed) {
+            console.log('  ✅ Token refreshed from disk');
+            return refreshed;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    await sleep(intervalMs);
+  }
+  throw new Error('timed out waiting for token (use the dashboard at :3000 to sign in)');
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -533,6 +567,8 @@ async function main() {
   console.log('║     🚀 Codex Gateway — OpenAI Login for Claude  ║');
   console.log('╚══════════════════════════════════════════════════╝\n');
   console.log(`  Model: ${config.default_model}  |  API: ${config.target_api_url}\n`);
+
+  const isServe = args.includes('--serve');
 
   // Get token
   let tokenData = null;
@@ -555,7 +591,14 @@ async function main() {
     }
 
     if (!tokenData) {
-      tokenData = await deviceCodeLogin();
+      if (isServe) {
+        // Headless: poll for a token written by the web dashboard
+        // login flow instead of opening a browser-based device code.
+        console.log('  ⏳ No token yet — waiting for web dashboard login...');
+        tokenData = await waitForToken();
+      } else {
+        tokenData = await deviceCodeLogin();
+      }
     }
   }
 
@@ -565,6 +608,16 @@ async function main() {
   // Start proxy
   console.log('  🔄 Starting streaming proxy (Anthropic → ChatGPT Codex backend)...');
   const proxyServer = await startProxy(config, bearerToken, accountId);
+
+  // Headless mode: serve the proxy and stop here. Used by the Docker
+  // container, which runs the Next.js dashboard alongside.
+  if (isServe) {
+    console.log(`  ✅ Proxy listening on port ${PROXY_PORT}`);
+    console.log('  (--serve mode: not launching Claude)');
+    process.on('SIGINT', () => { proxyServer.close(); process.exit(0); });
+    process.on('SIGTERM', () => { proxyServer.close(); process.exit(0); });
+    return;
+  }
 
   // Prepare isolated Claude config to bypass login screen
   const claudeConfigDir = path.join(CONFIG_DIR, 'claude-config');

@@ -1,6 +1,13 @@
 node_modules
 .env
+.env.local
 .git
 .gitignore
 README.md
 LICENSE
+legacy
+web/.next
+web/node_modules
+web/out
+**/.DS_Store
+**/.next/cache
