@@ -1,23 +1,56 @@
-# fly.toml app configuration file generated for app-damp-cloud-3494 on 2026-04-19T04:21:34Z
+# Fly.io config for the Mission Control container.
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+# The image is built from the repository's multi-stage Dockerfile and runs
+# both the Next.js dashboard (port 3000) and the gateway proxy (port 18923)
+# under tini via docker/entrypoint.sh. Only the dashboard is exposed
+# publicly; the gateway listens on 127.0.0.1:18923 inside the container.
 #
+# NOTE: The Fly app must already exist in your org before `fly deploy` will
+# succeed. Create it once with:
+#
+#     fly apps create app-damp-cloud-3494 --org <your-org>
+#
+# (or run `fly launch --copy-config --no-deploy` to provision it).
 
-app = 'app-damp-cloud-3494'
-primary_region = 'iad'
+app = "app-damp-cloud-3494"
+primary_region = "iad"
 
 [build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  HOSTNAME = "0.0.0.0"
 
 [http_service]
-  internal_port = 8080
+  internal_port = 3000
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
-  processes = ['app']
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/api/auth/status"
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 256
+  size = "shared-cpu-1x"
+
+# A volume must exist before the first deploy. Create it once with:
+#
+#     fly volumes create codex_gateway_state --region iad --size 1 -a app-damp-cloud-3494
+#
+# This persists the gateway token cache (~/.codex-gateway/token.json) and
+# Mission Control state (~/.codex-gateway/mission-control.json) across deploys.
+[mounts]
+  source = "codex_gateway_state"
+  destination = "/root/.codex-gateway"
