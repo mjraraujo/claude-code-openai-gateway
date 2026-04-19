@@ -91,9 +91,41 @@ Progress so far:
     Supports ↑↓ history, ⌘C to cancel a running command, ⌘K to
     clear, output truncation (4 MB), 5-minute hard timeout, and a
     blocklist for the obvious destructive prefixes.
-- [ ] **Step 6 — Agent runtime**: `ruflo` preload + harness control
-      plane wired to the right panel; Departments cron runners; Full
-      Auto Drive execution loop with per-step budget + kill switch.
+- [x] **Step 6 — Agent runtime**
+  - **In-process orchestrator** with persistent state at
+    `~/.codex-gateway/mission-control.json` (atomic write-rename).
+    Single `EventEmitter`-backed store fans out updates to every SSE
+    subscriber.
+  - **Bounded tool surface** in `src/lib/runtime/tools.ts`:
+    `read_file` / `write_file` / `exec`. Every call routes through
+    `safeJoin` + `assertInsideWorkspace` and the same exec blocklist
+    as `/api/exec`. Per-call read cap 64 KB, write cap 256 KB, exec
+    output cap 64 KB, exec wall-time cap 30 s.
+  - **Planner** (`planner.ts`) calls the local Codex gateway when a
+    valid OAuth token is present (`POST /v1/chat/completions` with
+    `response_format: json_object`), and falls back to a deterministic
+    mock planner when not — so the loop is observable in dev/test
+    without burning credits.
+  - **Auto-drive loop** (`drive.ts`) is fire-and-forget: API returns
+    immediately, loop continues until any of step-cap (1–50, default
+    12), wall-time (5–1800 s, default 300 s), byte budget (1 KB–8 MB,
+    default 1 MB), explicit `/auto-drive` stop, planner `done`, or
+    error. Exactly one run at a time; hard 409 on overlap.
+  - **Departments + cron**: minute-resolution scheduler started on
+    first import, schedule grammar `every Nm`, `every Nh`, `@hourly`,
+    `@daily`. Per-job step cap 1–6, 90 s wall-time, overlap-protected
+    via an in-flight set so a slow job never stacks up.
+  - **API** all session-cookie gated:
+    `GET /api/runtime/state` (SSE),
+    `PATCH /api/runtime/harness`,
+    `POST /api/runtime/auto-drive` (`{action:"start"|"stop", goal?, …}`),
+    `POST|DELETE /api/runtime/departments`,
+    `POST|DELETE /api/runtime/departments/[id]/cron`.
+  - **Right rail** rewired to live state: agent rows light up while a
+    run is active; harness toggles persist server-side; engage opens a
+    confirm modal with goal + step budget; live run log modal streams
+    the planner/tool/result transcript; department modal manages cron
+    jobs in place.
 
 ## Filesystem & exec safety
 
@@ -107,7 +139,9 @@ which:
    are rejected.
 
 `MISSION_CONTROL_WORKSPACE` overrides the workspace root if you don't
-want the parent of `web/`.
+want the parent of `web/`. `MISSION_CONTROL_GATEWAY_URL` overrides the
+default chat-completions endpoint (`http://127.0.0.1:18923/v1/chat/completions`)
+for containerised or remote deployments.
 
 ## Architecture notes
 
