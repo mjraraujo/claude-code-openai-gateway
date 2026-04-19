@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import type { RuntimeState } from "@/lib/runtime";
+
 interface StatusResponse {
   authenticated: boolean;
   token_valid: boolean;
@@ -10,6 +12,7 @@ interface StatusResponse {
 
 export function StatusBar() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [runtime, setRuntime] = useState<RuntimeState | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,12 +34,29 @@ export function StatusBar() {
     };
   }, []);
 
+  useEffect(() => {
+    const es = new EventSource("/api/runtime/state");
+    es.addEventListener("state", (ev) => {
+      try {
+        setRuntime(JSON.parse((ev as MessageEvent).data) as RuntimeState);
+      } catch {
+        /* ignore */
+      }
+    });
+    return () => es.close();
+  }, []);
+
   const onLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
   };
 
   const tokenValid = status?.token_valid;
+  const autoDriveActive = !!runtime?.autoDrive.current;
+  const cronTotal = runtime?.departments.reduce(
+    (acc, d) => acc + d.cron.length,
+    0,
+  );
 
   return (
     <header className="flex items-center justify-between border-b border-zinc-900 bg-black px-4 py-2 text-xs text-zinc-300">
@@ -59,6 +79,27 @@ export function StatusBar() {
         <span className="font-mono text-[10px] text-zinc-500">
           gateway: localhost:18923
         </span>
+        {autoDriveActive && (
+          <>
+            <span className="text-zinc-700">·</span>
+            <span className="flex items-center gap-1.5 font-mono text-[10px] text-red-300">
+              <span
+                aria-hidden
+                className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.7)]"
+              />
+              auto-drive · step{" "}
+              {runtime?.autoDrive.current?.steps.length ?? 0}
+            </span>
+          </>
+        )}
+        {!!cronTotal && !autoDriveActive && (
+          <>
+            <span className="text-zinc-700">·</span>
+            <span className="font-mono text-[10px] text-zinc-500">
+              {cronTotal} cron
+            </span>
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-3">
@@ -91,3 +132,4 @@ function formatRelative(ts: number): string {
   if (hours >= 1) return `${hours}h`;
   return `${Math.max(1, Math.floor(diff / 60_000))}m`;
 }
+

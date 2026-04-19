@@ -56,6 +56,18 @@ export interface Department {
   cron: CronJob[];
 }
 
+export type TaskColumn = "backlog" | "active" | "review" | "shipped";
+
+export interface Task {
+  id: string;
+  title: string;
+  column: TaskColumn;
+  tag?: string;
+  createdAt: number;
+  /** Id of an auto-drive run triggered from this task, if any. */
+  runId?: string;
+}
+
 export type AutoDriveStepKind =
   | "plan"
   | "tool"
@@ -96,6 +108,7 @@ export interface RuntimeState {
   agents: AgentState[];
   harness: HarnessState;
   departments: Department[];
+  tasks: Task[];
   autoDrive: {
     /** The active run, if any. */
     current: AutoDriveRun | null;
@@ -109,6 +122,15 @@ const CONFIG_DIR = path.join(
   ".codex-gateway",
 );
 const STATE_FILE = path.join(CONFIG_DIR, "mission-control.json");
+
+const SEED_TASKS: Task[] = [
+  { id: "T-101", title: "Wire OAuth device flow to gateway", column: "shipped", tag: "auth", createdAt: 0 },
+  { id: "T-102", title: "Mission Control 3-panel shell", column: "shipped", tag: "ui", createdAt: 0 },
+  { id: "T-103", title: "Embed Monaco workspace tab", column: "shipped", tag: "editor", createdAt: 0 },
+  { id: "T-104", title: "Real PTY for in-browser terminal", column: "shipped", tag: "infra", createdAt: 0 },
+  { id: "T-105", title: "Departments + cron matrix", column: "shipped", tag: "ops", createdAt: 0 },
+  { id: "T-106", title: "Full Auto Drive safety rails", column: "shipped", tag: "safety", createdAt: 0 },
+];
 
 const DEFAULT_STATE: RuntimeState = {
   agents: [
@@ -127,6 +149,7 @@ const DEFAULT_STATE: RuntimeState = {
     { id: "product", name: "Product", cron: [] },
     { id: "ops", name: "Ops", cron: [] },
   ],
+  tasks: SEED_TASKS,
   autoDrive: { current: null, history: [] },
 };
 
@@ -216,6 +239,18 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
         ? parsed.autoDrive.history.slice(0, 10)
         : [],
     };
+  }
+  if (parsed.tasks && Array.isArray(parsed.tasks)) {
+    merged.tasks = parsed.tasks.map((t) => ({
+      id: String(t.id),
+      title: String(t.title),
+      column: (["backlog", "active", "review", "shipped"].includes(String(t.column))
+        ? t.column
+        : "backlog") as TaskColumn,
+      tag: typeof t.tag === "string" ? t.tag : undefined,
+      createdAt: typeof t.createdAt === "number" ? t.createdAt : 0,
+      runId: typeof t.runId === "string" ? t.runId : undefined,
+    }));
   }
   return merged;
 }

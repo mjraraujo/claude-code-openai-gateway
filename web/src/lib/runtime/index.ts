@@ -20,6 +20,8 @@ export type {
   Department,
   HarnessState,
   RuntimeState,
+  Task,
+  TaskColumn,
 } from "./store";
 export { startAutoDrive, stopAutoDrive } from "./drive";
 export { parseSchedule } from "./cron";

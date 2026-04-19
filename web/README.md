@@ -126,6 +126,21 @@ Progress so far:
     confirm modal with goal + step budget; live run log modal streams
     the planner/tool/result transcript; department modal manages cron
     jobs in place.
+- [x] **Step 7 — Polish**
+  - **Kanban persistence**: tasks are stored in
+    `mission-control.json` alongside the rest of the runtime state
+    and pushed to every tab via SSE. `POST|PATCH|DELETE
+    /api/runtime/tasks` for create / move / delete. Seed cards
+    (T-101 → T-106) land in "Shipped" reflecting their real status.
+  - **Kanban → Auto Drive bridge**: each non-shipped card has a
+    "▶ run" action that moves it to the active sprint, starts an
+    auto-drive run with the card title as the goal (8-step cap),
+    and records the run id on the card. A pulsing "running" badge
+    appears while the run is live. An inline "+ New" form lets you
+    create cards with a title, target column, and optional tag.
+  - **Status bar runtime indicator**: while auto-drive is active the
+    top bar shows a pulsing red dot + live step count. While idle it
+    shows the total cron count.
 
 ## Filesystem & exec safety
 
