@@ -80,11 +80,34 @@ Progress so far:
       Side-by-Side). Right: agent orchestration, model selector,
       harness toggles, departments, and a Full Auto Drive engagement
       button with a confirmation modal.
-- [ ] **Step 5 — Real interactivity** — wire `@monaco-editor/react` for
-      the Workspace tab and a WebSocket-backed PTY (e.g. `xterm.js` +
-      `node-pty`) for the Terminal tab.
-- [ ] `ruflo` preload, harness control plane, Departments & cron
-      runners, Full Auto Drive execution loop with guardrails.
+- [x] **Step 5 — Real interactivity**
+  - Workspace tab now renders **Monaco Editor** (dynamic-imported,
+    SSR-disabled) backed by `GET/PUT /api/fs/file` and a directory
+    tree from `GET /api/fs/tree`. Save with the button or ⌘S; dirty
+    state and conflict-free overwrite.
+  - Terminal tab is a real **streaming shell**: client posts to
+    `POST /api/exec`, server runs `bash -lc <cmd>` in the gateway
+    repo and streams stdout/stderr/exit as Server-Sent Events.
+    Supports ↑↓ history, ⌘C to cancel a running command, ⌘K to
+    clear, output truncation (4 MB), 5-minute hard timeout, and a
+    blocklist for the obvious destructive prefixes.
+- [ ] **Step 6 — Agent runtime**: `ruflo` preload + harness control
+      plane wired to the right panel; Departments cron runners; Full
+      Auto Drive execution loop with per-step budget + kill switch.
+
+## Filesystem & exec safety
+
+All `/api/fs/*` and `/api/exec` routes require the session cookie.
+Paths are resolved through `safeJoin()` (`src/lib/fs/workspace.ts`)
+which:
+
+1. Refuses absolute inputs and traversal segments.
+2. Re-checks containment after `path.resolve`.
+3. `realpath`s the result so symlinks pointing outside the workspace
+   are rejected.
+
+`MISSION_CONTROL_WORKSPACE` overrides the workspace root if you don't
+want the parent of `web/`.
 
 ## Architecture notes
 
