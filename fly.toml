@@ -43,9 +43,13 @@ primary_region = "iad"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
-  cpus = 1
 
+# A volume must exist before the first deploy. Create it once with:
+#
+#     fly volumes create codex_gateway_state --region iad --size 1 -a app-still-pine-1384
+#
+# This persists the gateway token cache (~/.codex-gateway/token.json) and
+# Mission Control state (~/.codex-gateway/mission-control.json) across deploys.
 [mounts]
   source = "codex_gateway_state"
   destination = "/root/.codex-gateway"
