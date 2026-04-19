@@ -8,11 +8,11 @@
 # NOTE: The Fly app must already exist in your org before `fly deploy` will
 # succeed. Create it once with:
 #
-#     fly apps create app-still-pine-1384 --org <your-org>
+#     fly apps create app-damp-cloud-3494 --org <your-org>
 #
 # (or run `fly launch --copy-config --no-deploy` to provision it).
 
-app = "app-still-pine-1384"
+app = "app-damp-cloud-3494"
 primary_region = "iad"
 
 [build]
@@ -28,6 +28,7 @@ primary_region = "iad"
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
+  processes = ["app"]
 
   [http_service.concurrency]
     type = "requests"
@@ -46,7 +47,7 @@ primary_region = "iad"
 
 # A volume must exist before the first deploy. Create it once with:
 #
-#     fly volumes create codex_gateway_state --region iad --size 1 -a app-still-pine-1384
+#     fly volumes create codex_gateway_state --region iad --size 1 -a app-damp-cloud-3494
 #
 # This persists the gateway token cache (~/.codex-gateway/token.json) and
 # Mission Control state (~/.codex-gateway/mission-control.json) across deploys.
