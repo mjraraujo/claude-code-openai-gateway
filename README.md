@@ -217,6 +217,60 @@ server {
 }
 ```
 
+### Hostinger VPS quickstart
+
+Hostinger sells generic KVM Linux VPS plans (KVM 1/2/4/8). Mission Control runs comfortably on **KVM 2** (2 vCPU, 8 GB RAM, 100 GB NVMe) — KVM 1 (1 vCPU, 4 GB) also works but the `next build` inside the image is faster on KVM 2+. There is **no Hostinger-specific Docker image** — you use the same `docker-compose.yml` and GHCR image as any other VPS.
+
+1. **Provision the VPS in hPanel.**
+   * *VPS → Create new VPS* → choose **Ubuntu 24.04 with Docker** from the OS templates (this skips step 3). If you pick plain Ubuntu/AlmaLinux, install Docker yourself in step 3.
+   * Set a strong root password and add your SSH public key (*VPS → SSH Keys*).
+   * Pick a data centre near your users.
+
+2. **Open the firewall.**
+   In hPanel → *VPS → Firewall*, create (or attach) a rule set that allows inbound **22/tcp**, **80/tcp**, **443/tcp** only. Do **not** open `3000` or `18923` — they must stay on loopback. Hostinger's default firewall blocks everything else, which is what you want.
+
+3. **SSH in and install Docker** (skip if you used the *Ubuntu 24.04 with Docker* template):
+
+   ```bash
+   ssh root@<your-vps-ip>
+   curl -fsSL https://get.docker.com | sh
+   systemctl enable --now docker
+   ```
+
+4. **Drop in the compose file and start the container** using the prebuilt GHCR image (no source checkout, no Node toolchain on the VPS):
+
+   ```bash
+   mkdir -p /opt/mission-control && cd /opt/mission-control
+   curl -fsSLO https://raw.githubusercontent.com/mjraraujo/claude-code-openai-gateway/main/docker-compose.yml
+
+   # Replace `build: .` with the GHCR image:
+   sed -i 's|^\s*build: \.|    image: ghcr.io/mjraraujo/claude-code-openai-gateway:latest|' docker-compose.yml
+
+   docker compose up -d
+   docker compose logs -f --tail=100
+   ```
+
+5. **Point a domain at the VPS.**
+   * If you bought the domain from Hostinger: *Domains → Manage → DNS / Nameservers → DNS Zone* → add an `A` record for `mission` (or `@`) pointing at the VPS's public IPv4. (Hostinger's `srv*.hstgr.cloud` reverse-DNS hostname works for testing but **Caddy/Let's Encrypt cannot issue a cert for it** — use a real domain you control.)
+   * External registrar: create the same `A` record there.
+
+6. **Front it with Caddy for automatic TLS** (run on the VPS, not in the container):
+
+   ```bash
+   apt install -y caddy            # Ubuntu 24.04
+   cat >/etc/caddy/Caddyfile <<'EOF'
+   mission.example.com {
+       encode gzip
+       reverse_proxy 127.0.0.1:3000
+   }
+   EOF
+   systemctl reload caddy
+   ```
+
+   Open `https://mission.example.com`, sign in via the OpenAI device-code flow, and you're done. The OAuth token is persisted in the `mission-control-state` Docker volume, so container restarts do not log you out.
+
+> **About the Fly.io path.** `fly.toml` in this repo is provided as an alternative deploy target, but `flyctl deploy` only works after the app exists in your Fly org (`fly apps create <name> --org <slug>` or `fly launch --copy-config --no-deploy`). If you hit `Error: app not found`, either create the app first or use this Docker-on-VPS path instead — it has no such prerequisite.
+
 ### Hardening checklist
 
 * [ ] Firewall: only `22`, `80`, `443` open. **Do not** open `3000` or `18923`.
