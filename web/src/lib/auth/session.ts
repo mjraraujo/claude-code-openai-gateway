@@ -24,6 +24,21 @@ interface SetSessionOptions {
   maxAgeSeconds?: number;
 }
 
+/**
+ * Whether to mark the session cookie as `Secure`. We default to `true`
+ * in production so the cookie is never sent over plain HTTP, but allow
+ * an explicit opt-out via `MISSION_CONTROL_INSECURE_COOKIES=1` for
+ * setups that haven't configured TLS yet (e.g. a freshly-provisioned
+ * VPS where the user wants to load the dashboard at
+ * `http://<vps-ip>:3000` before wiring up Caddy + a domain).
+ *
+ * Exported for testing.
+ */
+export function shouldUseSecureCookie(): boolean {
+  if (process.env.MISSION_CONTROL_INSECURE_COOKIES === "1") return false;
+  return process.env.NODE_ENV === "production";
+}
+
 export async function setSessionCookie({
   apiKey,
   maxAgeSeconds = ONE_DAY_SECONDS,
@@ -34,7 +49,7 @@ export async function setSessionCookie({
     value: apiKey,
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     maxAge: maxAgeSeconds,
   });
@@ -47,7 +62,7 @@ export async function clearSessionCookie(): Promise<void> {
     value: "",
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     maxAge: 0,
   });

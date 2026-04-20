@@ -22,16 +22,35 @@ services:
     #
     # (Published by .github/workflows/docker.yml on every push to main.)
     ports:
-      # Dashboard. Bind to localhost when fronted by a reverse proxy on
-      # the same host (recommended) — change to "3000:3000" if you front
-      # it from another machine, but always terminate TLS upstream.
-      - "127.0.0.1:3000:3000"
+      # Dashboard. Defaults to loopback so a `docker compose up` on a
+      # VPS does not silently expose an unauthenticated UI to the
+      # internet — pair with a reverse proxy on the host (Caddy/Nginx)
+      # that terminates TLS and forwards to 127.0.0.1:3000.
+      #
+      # If you just want to test the dashboard from a browser before
+      # wiring up TLS, override the bind address per-invocation:
+      #
+      #   DASHBOARD_BIND=0.0.0.0 docker compose up -d
+      #
+      # When you do that over plain HTTP (no TLS), also set
+      # MISSION_CONTROL_INSECURE_COOKIES=1 in the `environment:` block
+      # below so the session cookie is not marked `Secure` (browsers
+      # drop Secure cookies on http:// URLs and login appears to "do
+      # nothing"). Treat this mode as testing-only — the dashboard has
+      # no built-in user accounts, so anyone who can reach the IP can
+      # use your ChatGPT session.
+      - "${DASHBOARD_BIND:-127.0.0.1}:3000:3000"
       # Gateway proxy — loopback only. NEVER expose publicly.
       - "127.0.0.1:18923:18923"
     environment:
       # Workspace for the embedded fs/exec tools. Override to mount a
       # repo from the host (see the volume below).
       MISSION_CONTROL_WORKSPACE: /workspace
+      # Uncomment if you are publishing the dashboard over plain HTTP
+      # (e.g. http://<vps-ip>:3000 with no reverse proxy). Without this
+      # the session cookie is marked `Secure` and browsers refuse to
+      # store it on non-HTTPS origins, so the login flow loops.
+      # MISSION_CONTROL_INSECURE_COOKIES: "1"
     volumes:
       # Persist OAuth token + Mission Control state.
       - mission-control-state:/root/.codex-gateway
