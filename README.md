@@ -196,20 +196,20 @@ Caddy will automatically obtain and renew a Let's Encrypt certificate. Visit `ht
 
 ### Test over plain HTTP without a domain
 
-If you don't have a domain pointed at the VPS yet and just want to see the dashboard load in a browser, you can publish port `3000` on the public interface and disable the cookie's `Secure` flag for the duration of the test:
+If you don't have a domain pointed at the VPS yet and just want to see the dashboard load in a browser, publish port `3000` on the public interface for the duration of the test:
 
 ```bash
-# In docker-compose.yml's environment: block, uncomment
-#   MISSION_CONTROL_INSECURE_COOKIES: "1"
-# Then bring the stack up with the public bind override:
 DASHBOARD_BIND=0.0.0.0 docker compose up -d
+# then open http://<vps-ip>:3000
 ```
 
-Then open `http://<vps-ip>:3000`.
+Mission Control auto-detects that the request arrived over plain HTTP and drops the `Secure` flag from the session cookie automatically, so login works without any further configuration. (When you later put it behind Caddy/Nginx, the same code sees `x-forwarded-proto: https` and re-enables `Secure`.)
 
-> **Use this for testing only.** With `MISSION_CONTROL_INSECURE_COOKIES=1` the session cookie is no longer marked `Secure`, so it will travel over plain HTTP. The dashboard has no built-in user accounts — anyone who can reach `<vps-ip>:3000` can drive your ChatGPT session. As soon as you have a domain, switch back to the `Caddy` flow above (remove `DASHBOARD_BIND`, re-comment `MISSION_CONTROL_INSECURE_COOKIES`, restart).
+> **Use this for testing only.** Over plain HTTP the session cookie travels in clear text, and the dashboard has no built-in user accounts — anyone who can reach `<vps-ip>:3000` can drive your ChatGPT session. As soon as you have a domain, switch back to the Caddy flow above (drop the `DASHBOARD_BIND` override and restart).
 
 > Port `18923` (the Anthropic↔OpenAI proxy) is **never** affected by `DASHBOARD_BIND` — it stays on `127.0.0.1` because it has no auth at all.
+
+> If your reverse proxy strips `x-forwarded-proto`, force the cookie security mode explicitly with `MISSION_CONTROL_FORCE_SECURE_COOKIES=1` (always `Secure`) or `MISSION_CONTROL_INSECURE_COOKIES=1` (never `Secure`).
 
 ### Equivalent Nginx snippet
 
@@ -307,8 +307,9 @@ Hostinger sells generic KVM Linux VPS plans (KVM 1/2/4/8). Mission Control runs 
 | `NODE_ENV` | container env | `production` | Standard Node env |
 | `PORT` | container env | `3000` | Next.js port |
 | `HOSTNAME` | container env | `0.0.0.0` | Next.js bind address (inside container) |
-| `MISSION_CONTROL_INSECURE_COOKIES` | container env (opt-in) | unset | Set to `1` to drop the `Secure` flag from the session cookie so the dashboard works over plain HTTP (testing only — never use this on a production deployment). |
-| `DASHBOARD_BIND` | host shell, read by `docker-compose.yml` | `127.0.0.1` | Host interface the dashboard's port `3000` is published on. Set to `0.0.0.0` to expose it on the public network — only do this with TLS in front, **or** pair it with `MISSION_CONTROL_INSECURE_COOKIES=1` for a temporary plain-HTTP test. |
+| `MISSION_CONTROL_INSECURE_COOKIES` | container env (opt-in) | unset | Set to `1` to force the session cookie to NOT be `Secure`, even on HTTPS requests. Normally unnecessary — the cookie security flag auto-detects the request scheme (including `x-forwarded-proto` from a reverse proxy). |
+| `MISSION_CONTROL_FORCE_SECURE_COOKIES` | container env (opt-in) | unset | Set to `1` to force the session cookie to ALWAYS be `Secure`, even when the request looks like plain HTTP. Useful when a TLS-terminating proxy strips `x-forwarded-proto`. Wins over `MISSION_CONTROL_INSECURE_COOKIES`. |
+| `DASHBOARD_BIND` | host shell, read by `docker-compose.yml` | `127.0.0.1` | Host interface the dashboard's port `3000` is published on. Set to `0.0.0.0` to expose it on the public network — pair with TLS in front, or use it for a temporary plain-HTTP test (the cookie security flag adapts automatically). |
 
 The gateway also reads its own config files from `~/.codex-gateway/`:
 
@@ -357,8 +358,8 @@ docker compose up -d
 | Symptom | Likely cause / fix |
 | --- | --- |
 | `docker compose up` warns about `version` being obsolete | You're on an old copy of `docker-compose.yml`; pull the latest. |
-| Browser cannot reach `http://<vps-ip>:3000` at all (timeout / refused) | The default compose binds port 3000 to `127.0.0.1`. Either set up the Caddy reverse proxy above (recommended) or, for a quick test, bring the stack up with `DASHBOARD_BIND=0.0.0.0 docker compose up -d` *and* uncomment `MISSION_CONTROL_INSECURE_COOKIES: "1"` in compose. See [Test over plain HTTP without a domain](#test-over-plain-http-without-a-domain). |
-| Login button "does nothing" / page reloads to `/login` over plain HTTP | The session cookie is marked `Secure` so browsers drop it on `http://`. Either front the dashboard with HTTPS (Caddy) or set `MISSION_CONTROL_INSECURE_COOKIES=1` for testing. |
+| Browser cannot reach `http://<vps-ip>:3000` at all (timeout / refused) | The default compose binds port 3000 to `127.0.0.1`. Either set up the Caddy reverse proxy above (recommended) or, for a quick test, bring the stack up with `DASHBOARD_BIND=0.0.0.0 docker compose up -d`. The session cookie will auto-adapt to plain HTTP. See [Test over plain HTTP without a domain](#test-over-plain-http-without-a-domain). |
+| Login button "does nothing" / page reloads to `/login` | The session cookie was rejected by the browser. Behind a reverse proxy, make sure it forwards `X-Forwarded-Proto` (Caddy does this automatically; the Nginx snippet above sets it explicitly). If your proxy strips that header, force the cookie mode with `MISSION_CONTROL_FORCE_SECURE_COOKIES=1` (HTTPS) or `MISSION_CONTROL_INSECURE_COOKIES=1` (plain HTTP). |
 | Dashboard shows "not authenticated" forever | OAuth token expired or never set. Click **Sign in** and complete the device-code flow; check `docker compose logs mission-control` for `device_code_failed`. |
 | `EADDRINUSE: 18923` on host | Another gateway is already running locally. Stop it or remove the `127.0.0.1:18923:18923` line from compose. |
 | Can reach `:3000` but not via your domain | Reverse proxy missing or DNS not pointing at the VPS. Check `dig mission.example.com` and `caddy validate`. |

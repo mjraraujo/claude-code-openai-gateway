@@ -32,13 +32,13 @@ services:
       #
       #   DASHBOARD_BIND=0.0.0.0 docker compose up -d
       #
-      # When you do that over plain HTTP (no TLS), also set
-      # MISSION_CONTROL_INSECURE_COOKIES=1 in the `environment:` block
-      # below so the session cookie is not marked `Secure` (browsers
-      # drop Secure cookies on http:// URLs and login appears to "do
-      # nothing"). Treat this mode as testing-only — the dashboard has
-      # no built-in user accounts, so anyone who can reach the IP can
-      # use your ChatGPT session.
+      # The session cookie auto-detects whether the request arrived
+      # over HTTPS (via `x-forwarded-proto`) and toggles its `Secure`
+      # flag accordingly, so login works on both plain `http://<vps-ip>`
+      # and behind a TLS-terminating reverse proxy without extra env
+      # vars. Treat the plain-HTTP mode as testing-only — the dashboard
+      # has no built-in user accounts, so anyone who can reach the IP
+      # can use your ChatGPT session.
       - "${DASHBOARD_BIND:-127.0.0.1}:3000:3000"
       # Gateway proxy — loopback only. NEVER expose publicly.
       - "127.0.0.1:18923:18923"
@@ -46,11 +46,11 @@ services:
       # Workspace for the embedded fs/exec tools. Override to mount a
       # repo from the host (see the volume below).
       MISSION_CONTROL_WORKSPACE: /workspace
-      # Uncomment if you are publishing the dashboard over plain HTTP
-      # (e.g. http://<vps-ip>:3000 with no reverse proxy). Without this
-      # the session cookie is marked `Secure` and browsers refuse to
-      # store it on non-HTTPS origins, so the login flow loops.
-      # MISSION_CONTROL_INSECURE_COOKIES: "1"
+      # Optional cookie-security overrides. Only set these if your
+      # reverse proxy strips `x-forwarded-proto` and the auto-detection
+      # picks the wrong mode.
+      #   MISSION_CONTROL_FORCE_SECURE_COOKIES: "1"  # always Secure
+      #   MISSION_CONTROL_INSECURE_COOKIES:    "1"   # never Secure
     volumes:
       # Persist OAuth token + Mission Control state.
       - mission-control-state:/root/.codex-gateway

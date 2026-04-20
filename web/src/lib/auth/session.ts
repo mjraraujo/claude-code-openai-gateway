@@ -10,7 +10,7 @@
  * header.
  */
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 
 import { SESSION_COOKIE_NAME } from "./constants";
 import { getSessionApiKey } from "./storage";
@@ -25,44 +25,90 @@ interface SetSessionOptions {
 }
 
 /**
- * Whether to mark the session cookie as `Secure`. We default to `true`
- * in production so the cookie is never sent over plain HTTP, but allow
- * an explicit opt-out via `MISSION_CONTROL_INSECURE_COOKIES=1` for
- * setups that haven't configured TLS yet (e.g. a freshly-provisioned
- * VPS where the user wants to load the dashboard at
- * `http://<vps-ip>:3000` before wiring up Caddy + a domain).
+ * Decide whether to mark the session cookie as `Secure`.
+ *
+ * Browsers refuse to store `Secure` cookies on plain-`http://` origins,
+ * which silently breaks login on a freshly-provisioned VPS that hasn't
+ * been put behind TLS yet. To make the dashboard "just work" everywhere
+ * we auto-detect the request scheme:
+ *
+ *  - Direct HTTPS request (`x-forwarded-proto: https` from a reverse
+ *    proxy, or a request URL starting with `https://`): cookie is
+ *    `Secure`.
+ *  - Plain HTTP (typical for `http://<vps-ip>:3000` before TLS is set
+ *    up, or local `http://localhost:3000`): cookie is **not** `Secure`,
+ *    so the browser actually stores it.
+ *
+ * Two explicit overrides remain, for setups where the auto-detection
+ * is wrong:
+ *
+ *  - `MISSION_CONTROL_FORCE_SECURE_COOKIES=1` → always `Secure`.
+ *  - `MISSION_CONTROL_INSECURE_COOKIES=1` → never `Secure`.
  *
  * Exported for testing.
  */
-export function shouldUseSecureCookie(): boolean {
+export function shouldUseSecureCookie(requestProto?: string): boolean {
+  if (process.env.MISSION_CONTROL_FORCE_SECURE_COOKIES === "1") return true;
   if (process.env.MISSION_CONTROL_INSECURE_COOKIES === "1") return false;
+  if (requestProto) {
+    return requestProto.toLowerCase() === "https";
+  }
+  // Conservative fallback when we have no request context at all
+  // (e.g. unit tests): keep the legacy behaviour so we don't accidentally
+  // serve a non-Secure cookie in production.
   return process.env.NODE_ENV === "production";
+}
+
+/**
+ * Resolve the effective request scheme from Next.js request headers.
+ * Honours `x-forwarded-proto` (set by Caddy/Nginx) before falling back
+ * to whatever Next put in `host`. Returns `undefined` when called
+ * outside a request scope.
+ */
+async function detectRequestProto(): Promise<string | undefined> {
+  try {
+    const h = await headers();
+    const fwd = h.get("x-forwarded-proto");
+    if (fwd) {
+      // Some proxies send a comma-separated list — take the first hop.
+      const first = fwd.split(",")[0]?.trim().toLowerCase();
+      if (first === "http" || first === "https") return first;
+    }
+    // Next 16 exposes the original URL via `x-forwarded-proto` from its
+    // own server too; if it's missing we have no reliable signal, so
+    // return undefined and let the env-var fallback decide.
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function setSessionCookie({
   apiKey,
   maxAgeSeconds = ONE_DAY_SECONDS,
 }: SetSessionOptions): Promise<void> {
+  const proto = await detectRequestProto();
   const store = await cookies();
   store.set({
     name: SESSION_COOKIE_NAME,
     value: apiKey,
     httpOnly: true,
     sameSite: "lax",
-    secure: shouldUseSecureCookie(),
+    secure: shouldUseSecureCookie(proto),
     path: "/",
     maxAge: maxAgeSeconds,
   });
 }
 
 export async function clearSessionCookie(): Promise<void> {
+  const proto = await detectRequestProto();
   const store = await cookies();
   store.set({
     name: SESSION_COOKIE_NAME,
     value: "",
     httpOnly: true,
     sameSite: "lax",
-    secure: shouldUseSecureCookie(),
+    secure: shouldUseSecureCookie(proto),
     path: "/",
     maxAge: 0,
   });
