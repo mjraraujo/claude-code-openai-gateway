@@ -94,6 +94,16 @@ describe("consumeAnthropicStream", () => {
       'event: error\ndata: {"type":"error","error":{"type":"api_error","message":"upstream 502"}}\n\n',
     ];
     const result = await consumeAnthropicStream(streamFrom(events));
-    expect(result.content).toContain("upstream 502");
+    // No prior text → no leading newline.
+    expect(result.content).toBe("[gateway error] upstream 502");
+  });
+
+  it("appends gateway error events after existing text with a separator", async () => {
+    const events = [
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}\n\n',
+      'event: error\ndata: {"type":"error","error":{"message":"boom"}}\n\n',
+    ];
+    const result = await consumeAnthropicStream(streamFrom(events));
+    expect(result.content).toBe("partial\n[gateway error] boom");
   });
 });

@@ -121,9 +121,13 @@ function feedBlock(block: string, acc: Accumulator): void {
     }
     case "error": {
       // Surface gateway-side errors as readable text rather than
-      // silently swallowing the stream.
+      // silently swallowing the stream. Avoid a leading newline when
+      // no prior text has been accumulated.
       const err = e.error as { message?: string } | undefined;
-      if (err?.message) acc.text += `\n[gateway error] ${err.message}`;
+      if (err?.message) {
+        const sep = acc.text ? "\n" : "";
+        acc.text += `${sep}[gateway error] ${err.message}`;
+      }
       return;
     }
     default:
