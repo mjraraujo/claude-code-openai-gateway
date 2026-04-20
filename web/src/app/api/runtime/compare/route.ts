@@ -14,19 +14,26 @@
  * one-shot completions, and the dashboard already has a streaming
  * surface (Auto Drive). Side-by-Side optimises for an at-a-glance
  * comparison, not real-time tool use.
+ *
+ * Wire protocol note: `bin/gateway.js` is an Anthropic-shaped proxy
+ * that *always* streams SSE (it has no non-streaming JSON mode). So
+ * we send `{ system, messages, max_tokens }` and parse the resulting
+ * `event: message_start / content_block_delta / message_delta /
+ * message_stop` stream into a single accumulated string per lane.
  */
 
 import { NextResponse } from "next/server";
 
 import { isSessionAuthenticated } from "@/lib/auth/session";
 import { getOrCreateSessionApiKey, getValidToken } from "@/lib/auth/storage";
+import { consumeAnthropicStream } from "@/lib/gateway/anthropicStream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const GATEWAY_URL =
   process.env.MISSION_CONTROL_GATEWAY_URL ??
-  "http://127.0.0.1:18923/v1/chat/completions";
+  "http://127.0.0.1:18923/v1/messages";
 
 const MAX_LANES = 4;
 const MAX_PROMPT_CHARS = 4000;
@@ -164,43 +171,43 @@ async function runLane(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Accept: "text/event-stream",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: lane.model,
+        // Anthropic-shaped request — bin/gateway.js translates this
+        // into the Codex Responses API. `system` is optional; we omit
+        // it so the upstream system prompt baked into the gateway is
+        // used as-is.
         messages: [{ role: "user", content: prompt }],
         max_tokens: maxTokens,
         temperature: 0.3,
+        stream: true,
       }),
       signal: ctrl.signal,
     });
-    const latencyMs = Date.now() - t0;
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
       const text = await res.text().catch(() => "");
       return {
         id: lane.id,
         model: lane.model,
         ok: false,
-        latencyMs,
+        latencyMs: Date.now() - t0,
         content: "",
         toolCalls: 0,
         error: `gateway ${res.status}: ${truncate(text, 200)}`,
       };
     }
-    const json = (await res.json()) as ChatResponse;
-    const choice = json.choices?.[0];
-    const content = (choice?.message?.content ?? "").toString();
-    const toolCalls = Array.isArray(choice?.message?.tool_calls)
-      ? (choice?.message?.tool_calls?.length ?? 0)
-      : 0;
+    const parsed = await consumeAnthropicStream(res.body);
     return {
       id: lane.id,
       model: lane.model,
       ok: true,
-      latencyMs,
-      content,
-      toolCalls,
-      usage: json.usage,
+      latencyMs: Date.now() - t0,
+      content: parsed.content,
+      toolCalls: parsed.toolCalls,
+      usage: parsed.usage,
     };
   } catch (err) {
     const aborted = (err as Error).name === "AbortError";
@@ -218,19 +225,11 @@ async function runLane(
   }
 }
 
-interface ChatResponse {
-  choices?: Array<{
-    message?: {
-      content?: string;
-      tool_calls?: unknown[];
-    };
-  }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
-}
+/* ─── Anthropic SSE accumulator ──────────────────────────────────────── */
+
+// Implementation lives in `@/lib/gateway/anthropicStream` so it can be
+// unit-tested without dragging the route's `next/headers` imports
+// into the vitest node env.
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "…" : s;
