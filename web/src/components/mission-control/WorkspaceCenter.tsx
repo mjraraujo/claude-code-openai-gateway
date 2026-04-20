@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { SideBySideView } from "./SideBySideView";
 import { TerminalView } from "./TerminalView";
@@ -16,6 +16,23 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function WorkspaceCenter() {
   const [tab, setTab] = useState<Tab>("workspace");
+  // Track which tabs have been visited so each is mounted lazily on
+  // first open (preserves Monaco's lazy-boot behavior) but stays
+  // mounted thereafter — switching tabs must not abort an in-flight
+  // terminal command or wipe scrollback / open editor buffers.
+  const [visited, setVisited] = useState<Set<Tab>>(
+    () => new Set<Tab>(["workspace"]),
+  );
+
+  const selectTab = useCallback((id: Tab) => {
+    setTab(id);
+    setVisited((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-zinc-950">
@@ -26,7 +43,7 @@ export function WorkspaceCenter() {
             <button
               key={t.id}
               type="button"
-              onClick={() => setTab(t.id)}
+              onClick={() => selectTab(t.id)}
               className={
                 "rounded-md px-3 py-1 text-xs font-medium transition " +
                 (active
@@ -41,14 +58,27 @@ export function WorkspaceCenter() {
       </div>
 
       {/*
-        Each tab is mounted lazily and unmounted when hidden — this
-        keeps Monaco from booting until the user opens the Workspace
-        tab, and tears down the SSE connection when leaving Terminal.
+        Tabs are mounted lazily on first visit, then kept mounted
+        and toggled with `hidden` so background work (running shell
+        commands, SSE streams, dirty editor buffers) survives tab
+        switches.
       */}
-      <div className="flex-1 overflow-hidden">
-        {tab === "terminal" && <TerminalView />}
-        {tab === "workspace" && <WorkspaceView />}
-        {tab === "side-by-side" && <SideBySideView />}
+      <div className="relative flex-1 overflow-hidden">
+        {visited.has("terminal") && (
+          <div className={tab === "terminal" ? "h-full" : "hidden"}>
+            <TerminalView />
+          </div>
+        )}
+        {visited.has("workspace") && (
+          <div className={tab === "workspace" ? "h-full" : "hidden"}>
+            <WorkspaceView />
+          </div>
+        )}
+        {visited.has("side-by-side") && (
+          <div className={tab === "side-by-side" ? "h-full" : "hidden"}>
+            <SideBySideView />
+          </div>
+        )}
       </div>
     </section>
   );

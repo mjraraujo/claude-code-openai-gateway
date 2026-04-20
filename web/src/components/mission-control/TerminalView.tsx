@@ -227,22 +227,45 @@ export function TerminalView() {
             {l.text}
           </div>
         ))}
-        {!running && (
-          <div className="mt-1 flex items-center gap-1.5">
-            <span className="text-emerald-400">$</span>
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onKeyDown}
-              spellCheck={false}
-              autoComplete="off"
-              autoCapitalize="off"
-              className="flex-1 bg-transparent text-zinc-100 outline-none placeholder:text-zinc-700"
-              placeholder='Try: git status   ·   ls -la   ·   npm test'
-            />
-          </div>
-        )}
+        {/*
+          A single input is rendered in both idle and running states
+          (just toggled to readOnly when running) so focus is
+          preserved across the transition — important so ⌘C / Ctrl+C
+          continues to reach `onKeyDown` immediately after the user
+          presses Enter, without requiring a re-click.
+        */}
+        <div className="mt-1 flex items-center gap-1.5">
+          <span
+            className={
+              running
+                ? "animate-pulse text-amber-400"
+                : "text-emerald-400"
+            }
+          >
+            {running ? "…" : "$"}
+          </span>
+          <input
+            ref={inputRef}
+            value={running ? "" : input}
+            readOnly={running}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+            spellCheck={false}
+            autoComplete="off"
+            autoCapitalize="off"
+            className={
+              "flex-1 bg-transparent outline-none placeholder:text-zinc-700 " +
+              (running
+                ? "cursor-default text-zinc-500"
+                : "text-zinc-100")
+            }
+            placeholder={
+              running
+                ? "running… press ⌘C / Ctrl+C to cancel"
+                : "Try: git status   ·   ls -la   ·   npm test"
+            }
+          />
+        </div>
       </div>
 
       <p className="border-t border-zinc-900 px-4 py-1.5 text-[10px] text-zinc-600">
