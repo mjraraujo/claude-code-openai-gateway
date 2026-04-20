@@ -30,7 +30,7 @@ This project is a local translation proxy. It "hijacks" the official Anthropic C
 
 * **`bin/gateway.js`** — a zero-dependency Node script that handles the OpenAI device-code login, caches the OAuth token at `~/.codex-gateway/token.json`, and exposes an Anthropic-compatible proxy on **port 18923** that talks to the ChatGPT backend.
 * **`web/`** — Mission Control: a Next.js 16 + TypeScript + Tailwind v4 dashboard that wraps the gateway with login, task management, an embedded Monaco workspace + terminal, agent orchestration, side-by-side model comparison, and a re-auth flow that doesn't kick you out.
-* **`Dockerfile` + `docker-compose.yml`** — one container that runs both the dashboard (port 3000) and the gateway (port 18923) under [`tini`](https://github.com/krallin/tini) with a supervisor entrypoint and a healthcheck on `/api/auth/status`.
+* **`Dockerfile` + `docker-compose.yml`** — one container that runs both the dashboard (port 3000, the only published port) and the gateway (port 18923, container-internal only) under [`tini`](https://github.com/krallin/tini) with a supervisor entrypoint and a healthcheck on `/api/auth/status`.
 * **GitHub Actions** that publish the container image to **`ghcr.io/mjraraujo/claude-code-openai-gateway`** on every push to `main` and on every `v*.*.*` tag, and a small docs site to GitHub Pages.
 
 ### Why use this?
@@ -122,7 +122,7 @@ Then click **Sign in** on the dashboard, complete the OpenAI device-code flow in
 
 ### What the compose file actually does
 
-* **Ports** — `127.0.0.1:3000` (dashboard) and `127.0.0.1:18923` (gateway) are bound to **loopback only**. The dashboard talks to the gateway over container loopback, so the host port for `18923` only matters if you want your *host's* Claude Code CLI to use it. The proxy has **no authentication** — never publish it on `0.0.0.0`.
+* **Ports** — only the dashboard (`127.0.0.1:3000` by default) is published. The gateway proxy on port `18923` is **container-internal**: it binds to `127.0.0.1` inside the container and is reached by Mission Control over container loopback. There is no host port for `18923`, so it cannot be exposed by accident. If you want to use the gateway from your *host's* Claude Code CLI, run `node bin/gateway.js` directly on the host instead of routing through Docker.
 * **Volumes**
   * `mission-control-state` (named) → `/root/.codex-gateway` — OAuth token + Mission Control state. Survives `down` / image rebuilds.
   * `./workspace` (bind) → `/workspace` — the directory the dashboard's filesystem + exec tools operate on. Auto-created on first `up` if missing.
@@ -150,7 +150,7 @@ Available tags: `latest` (default branch), `vX.Y.Z` and `X.Y` (release tags), an
 
 The compose file is **deploy-ready** with two important caveats:
 
-1. **Never publish port 18923 publicly** — it is an unauthenticated proxy. The default `127.0.0.1:18923:18923` binding handles this for you.
+1. **The gateway proxy is unauthenticated, so the compose file does not publish port 18923 at all.** It binds to `127.0.0.1` inside the container and is reached by Mission Control over container loopback. Do not add a `18923:18923` port mapping.
 2. **Always front port 3000 with HTTPS.** The dashboard holds an OAuth token that must not be served over plain HTTP across the public internet.
 
 ### Step-by-step
@@ -207,7 +207,7 @@ Mission Control auto-detects that the request arrived over plain HTTP and drops 
 
 > **Use this for testing only.** Over plain HTTP the session cookie travels in clear text, and the dashboard has no built-in user accounts — anyone who can reach `<vps-ip>:3000` can drive your ChatGPT session. As soon as you have a domain, switch back to the Caddy flow above (drop the `DASHBOARD_BIND` override and restart).
 
-> Port `18923` (the Anthropic↔OpenAI proxy) is **never** affected by `DASHBOARD_BIND` — it stays on `127.0.0.1` because it has no auth at all.
+> Port `18923` (the Anthropic↔OpenAI proxy) is **never** published from the container, regardless of `DASHBOARD_BIND` — it lives entirely inside the container and is reached only over container loopback by Mission Control.
 
 > If your reverse proxy strips `x-forwarded-proto`, force the cookie security mode explicitly with `MISSION_CONTROL_FORCE_SECURE_COOKIES=1` (always `Secure`) or `MISSION_CONTROL_INSECURE_COOKIES=1` (never `Secure`).
 
@@ -246,7 +246,7 @@ Hostinger sells generic KVM Linux VPS plans (KVM 1/2/4/8). Mission Control runs 
    * Pick a data centre near your users.
 
 2. **Open the firewall.**
-   In hPanel → *VPS → Firewall*, create (or attach) a rule set that allows inbound **22/tcp**, **80/tcp**, **443/tcp** only. Do **not** open `3000` or `18923` — they must stay on loopback. Hostinger's default firewall blocks everything else, which is what you want.
+   In hPanel → *VPS → Firewall*, create (or attach) a rule set that allows inbound **22/tcp**, **80/tcp**, **443/tcp** only. Do **not** open `3000` — it must stay on loopback. Port `18923` is never published from the container, so there is nothing to block. Hostinger's default firewall blocks everything else, which is what you want.
 
 3. **SSH in and install Docker** (skip if you used the *Ubuntu 24.04 with Docker* template):
 
@@ -292,7 +292,7 @@ Hostinger sells generic KVM Linux VPS plans (KVM 1/2/4/8). Mission Control runs 
 
 ### Hardening checklist
 
-* [ ] Firewall: only `22`, `80`, `443` open. **Do not** open `3000` or `18923`.
+* [ ] Firewall: only `22`, `80`, `443` open. **Do not** open `3000` (port `18923` isn't published from the container, so you can't open it by accident).
 * [ ] Run Caddy/Nginx with HTTP→HTTPS redirect.
 * [ ] Add HTTP basic auth at the reverse proxy (the dashboard itself has no built-in user accounts — anyone who can reach it can issue commands using your ChatGPT session).
 * [ ] Back up the `mission-control-state` volume (see below).
@@ -361,7 +361,7 @@ docker compose up -d
 | Browser cannot reach `http://<vps-ip>:3000` at all (timeout / refused) | The default compose binds port 3000 to `127.0.0.1`. Either set up the Caddy reverse proxy above (recommended) or, for a quick test, bring the stack up with `DASHBOARD_BIND=0.0.0.0 docker compose up -d`. The session cookie will auto-adapt to plain HTTP. See [Test over plain HTTP without a domain](#test-over-plain-http-without-a-domain). |
 | Login button "does nothing" / page reloads to `/login` | The session cookie was rejected by the browser. Behind a reverse proxy, make sure it forwards `X-Forwarded-Proto` (Caddy does this automatically; the Nginx snippet above sets it explicitly). If your proxy strips that header, force the cookie mode with `MISSION_CONTROL_FORCE_SECURE_COOKIES=1` (HTTPS) or `MISSION_CONTROL_INSECURE_COOKIES=1` (plain HTTP). |
 | Dashboard shows "not authenticated" forever | OAuth token expired or never set. Click **Sign in** and complete the device-code flow; check `docker compose logs mission-control` for `device_code_failed`. |
-| `EADDRINUSE: 18923` on host | Another gateway is already running locally. Stop it or remove the `127.0.0.1:18923:18923` line from compose. |
+| `EADDRINUSE: 18923` inside the container | Another gateway process is already running in the container (rare — usually a wedged restart). `docker compose restart mission-control` will clear it. The port is no longer published to the host, so a host-side gateway will not conflict. |
 | Can reach `:3000` but not via your domain | Reverse proxy missing or DNS not pointing at the VPS. Check `dig mission.example.com` and `caddy validate`. |
 | SSE / live updates stop after ~60 s on Nginx | Add `proxy_read_timeout 1h` and `proxy_buffering off` (shown above). |
 | Container restart loops | `docker compose logs mission-control` — usually a missing volume mount or port already in use. |
