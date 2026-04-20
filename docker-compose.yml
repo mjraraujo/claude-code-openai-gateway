@@ -1,11 +1,16 @@
 # Mission Control container exposes:
 #   - 3000  : Next.js dashboard (login + UI)         — bind to your reverse proxy
-#   - 18923 : Codex gateway proxy (Anthropic ↔ OpenAI translation)
-#            — bound to 127.0.0.1 by default so it is NOT public on a VPS.
-#              The dashboard talks to it over container loopback regardless.
-#              If you want to use the gateway from the host's Claude Code
-#              CLI, 127.0.0.1:18923 on the host is fine. Do NOT publish
-#              this port on 0.0.0.0 — there is no auth on the proxy.
+#
+# The Codex gateway proxy (port 18923, Anthropic ↔ OpenAI translation)
+# is intentionally **not** published. It runs inside the container,
+# binds to 127.0.0.1 only, and is reached by Mission Control over
+# container loopback. Because the proxy has no authentication of its
+# own, keeping it container-internal removes the possibility of
+# accidentally exposing it on a VPS.
+#
+# If you specifically want to use the gateway from your *host's*
+# Claude Code CLI, run `node bin/gateway.js` directly on the host
+# (outside Docker) instead — see the README.
 #
 # A named volume keeps the OAuth token + Mission Control state
 # (~/.codex-gateway inside the container) across restarts so users
@@ -22,16 +27,35 @@ services:
     #
     # (Published by .github/workflows/docker.yml on every push to main.)
     ports:
-      # Dashboard. Bind to localhost when fronted by a reverse proxy on
-      # the same host (recommended) — change to "3000:3000" if you front
-      # it from another machine, but always terminate TLS upstream.
-      - "127.0.0.1:3000:3000"
-      # Gateway proxy — loopback only. NEVER expose publicly.
-      - "127.0.0.1:18923:18923"
+      # Dashboard. Defaults to loopback so a `docker compose up` on a
+      # VPS does not silently expose an unauthenticated UI to the
+      # internet — pair with a reverse proxy on the host (Caddy/Nginx)
+      # that terminates TLS and forwards to 127.0.0.1:3000.
+      #
+      # If you just want to test the dashboard from a browser before
+      # wiring up TLS, override the bind address per-invocation:
+      #
+      #   DASHBOARD_BIND=0.0.0.0 docker compose up -d
+      #
+      # The session cookie auto-detects whether the request arrived
+      # over HTTPS (via `x-forwarded-proto`) and toggles its `Secure`
+      # flag accordingly, so login works on both plain `http://<vps-ip>`
+      # and behind a TLS-terminating reverse proxy without extra env
+      # vars. Treat the plain-HTTP mode as testing-only — the dashboard
+      # has no built-in user accounts, so anyone who can reach the IP
+      # can use your ChatGPT session.
+      - "${DASHBOARD_BIND:-127.0.0.1}:3000:3000"
+      # Note: gateway port 18923 is deliberately NOT published — see
+      # the comment at the top of this file.
     environment:
       # Workspace for the embedded fs/exec tools. Override to mount a
       # repo from the host (see the volume below).
       MISSION_CONTROL_WORKSPACE: /workspace
+      # Optional cookie-security overrides. Only set these if your
+      # reverse proxy strips `x-forwarded-proto` and the auto-detection
+      # picks the wrong mode.
+      #   MISSION_CONTROL_FORCE_SECURE_COOKIES: "1"  # always Secure
+      #   MISSION_CONTROL_INSECURE_COOKIES:    "1"   # never Secure
     volumes:
       # Persist OAuth token + Mission Control state.
       - mission-control-state:/root/.codex-gateway

@@ -507,8 +507,13 @@ function startProxy(config, accessToken, accountId) {
       });
     });
 
-    server.listen(PROXY_PORT, () => {
-      console.log(`  ✅ Proxy running on http://localhost:${PROXY_PORT}`);
+    // Bind to loopback only. The proxy has no authentication of its
+    // own (it relies on the OAuth token cached at ~/.codex-gateway), so
+    // it must never be reachable from a non-local network. In the
+    // Docker image Mission Control runs in the same container and
+    // reaches us over container loopback, so 127.0.0.1 is sufficient.
+    server.listen(PROXY_PORT, '127.0.0.1', () => {
+      console.log(`  ✅ Proxy running on http://127.0.0.1:${PROXY_PORT}`);
       resolve(server);
     });
   });
