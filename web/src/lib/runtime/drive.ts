@@ -11,7 +11,14 @@
  */
 
 import { plan, type PlanAction } from "./planner";
-import { execCommand, readFile, writeFile } from "./tools";
+import {
+  execCommand,
+  readFile,
+  runCucumber,
+  runDeploy,
+  writeFeatureFile,
+  writeFile,
+} from "./tools";
 import {
   AutoDriveRun,
   AutoDriveStep,
@@ -89,7 +96,7 @@ export async function startAutoDrive(opts: StartOptions): Promise<AutoDriveRun> 
   if (!goal) throw new Error("missing_goal");
 
   const initialSnap = await getStore().snapshot();
-  const model = (opts.model ?? initialSnap.harness.model ?? "").trim() || "gpt-5.4";
+  const model = (opts.model ?? initialSnap.harness.model ?? "").trim() || "gpt-5.3-codex";
 
   const options: ActiveLoop["options"] = {
     goal,
@@ -286,6 +293,12 @@ async function executeTool(action: PlanAction) {
       return writeFile(action.path, action.content);
     case "exec":
       return execCommand(action.command);
+    case "feature_file":
+      return writeFeatureFile(action.path, action.content);
+    case "cucumber":
+      return runCucumber(action.path);
+    case "deploy":
+      return runDeploy(action.environment);
     case "done":
       return { ok: true, output: action.summary };
   }
@@ -364,6 +377,12 @@ function describeAction(action: PlanAction): string {
       return `write_file ${action.path} (${action.content.length}b)`;
     case "exec":
       return `exec ${truncate(action.command, 120)}`;
+    case "feature_file":
+      return `feature_file ${action.path} (${action.content.length}b)`;
+    case "cucumber":
+      return `cucumber ${action.path ?? "(default)"}`;
+    case "deploy":
+      return `deploy ${action.environment ?? "(default)"}`;
     case "done":
       return `done: ${action.summary}`;
   }
@@ -377,6 +396,12 @@ function redactArgs(action: PlanAction): Record<string, unknown> {
       return { path: action.path };
     case "exec":
       return { command: action.command };
+    case "feature_file":
+      return { path: action.path, contentBytes: action.content.length };
+    case "cucumber":
+      return { path: action.path ?? null };
+    case "deploy":
+      return { environment: action.environment ?? null };
     case "done":
       return { summary: action.summary };
   }
@@ -416,6 +441,14 @@ export function planSignature(action: PlanAction): string {
       }::${action.content.slice(-64)}`;
     case "exec":
       return `exec::${action.command.replace(/\s+/g, " ").trim()}`;
+    case "feature_file":
+      return `feature_file::${action.path}::${action.content.length}::${
+        action.content.slice(0, 64)
+      }::${action.content.slice(-64)}`;
+    case "cucumber":
+      return `cucumber::${action.path ?? ""}`;
+    case "deploy":
+      return `deploy::${action.environment ?? ""}`;
     case "done":
       return `done::${action.summary.trim()}`;
   }

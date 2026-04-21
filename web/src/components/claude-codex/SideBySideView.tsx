@@ -42,7 +42,7 @@ const DEFAULT_LANES: Lane[] = [
   {
     id: "claude-codex",
     label: "claude-codex",
-    model: "gpt-5.4",
+    model: "gpt-5.3-codex",
     tint: "border-emerald-500/40",
   },
   {

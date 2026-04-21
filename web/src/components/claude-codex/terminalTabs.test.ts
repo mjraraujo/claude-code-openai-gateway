@@ -10,19 +10,29 @@ import {
 } from "./terminalTabs";
 
 describe("terminalTabs state", () => {
-  it("starts with exactly one focused tab", () => {
+  it("starts with exactly one focused tab — the interactive claude PTY", () => {
     const s = initialTabsState();
     expect(s.tabs).toHaveLength(1);
     expect(s.activeId).toBe(s.tabs[0].id);
-    expect(s.tabs[0].label).toBe("Shell 1");
+    expect(s.tabs[0].label).toBe("claude");
+    expect(s.tabs[0].kind).toBe("claude");
   });
 
-  it("addTab appends and focuses the new tab with monotonic label", () => {
+  it("addTab appends a shell tab by default with monotonic label", () => {
     let s = initialTabsState();
     s = addTab(s);
     s = addTab(s);
-    expect(s.tabs.map((t) => t.label)).toEqual(["Shell 1", "Shell 2", "Shell 3"]);
+    expect(s.tabs.map((t) => t.label)).toEqual(["claude", "Shell 2", "Shell 3"]);
+    expect(s.tabs.map((t) => t.kind)).toEqual(["claude", "shell", "shell"]);
     expect(s.activeId).toBe(s.tabs[2].id);
+  });
+
+  it("addTab(state, 'claude') adds an interactive claude tab without bumping the shell counter", () => {
+    let s = initialTabsState();
+    s = addTab(s, "claude");
+    s = addTab(s); // shell — should still be "Shell 2"
+    expect(s.tabs.map((t) => t.label)).toEqual(["claude", "claude", "Shell 2"]);
+    expect(s.tabs.map((t) => t.kind)).toEqual(["claude", "claude", "shell"]);
   });
 
   it("addTab is a no-op once MAX_TERMINALS is reached", () => {

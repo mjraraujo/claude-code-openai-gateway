@@ -8,36 +8,9 @@ import {
   type Task,
   type TaskColumn,
 } from "@/lib/runtime";
-import { buildWebhookPayload, dispatchWebhook, type WebhookEvent } from "@/lib/runtime/webhook";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/**
- * Fire the configured outbound webhook in the background. Never
- * awaited by the request handler so a slow / broken endpoint cannot
- * delay or fail the Kanban API call. Errors are logged and dropped.
- */
-function fireWebhook(event: WebhookEvent, before: Task | null, after: Task | null): void {
-  // Defer reading the store until the next tick so the persist queue
-  // has a chance to settle before we observe `harness.webhook`.
-  void Promise.resolve()
-    .then(async () => {
-      const snap = await getStore().snapshot();
-      const cfg = snap.harness.webhook;
-      if (!cfg || !cfg.enabled || !cfg.url) return;
-      const payload = buildWebhookPayload(event, before, after);
-      const res = await dispatchWebhook(cfg, payload);
-      if (!res.ok) {
-        console.warn(
-          `[webhook] ${event} delivery failed: ${res.error ?? "unknown"} (status=${res.status ?? "n/a"})`,
-        );
-      }
-    })
-    .catch((err) => {
-      console.warn(`[webhook] ${event} dispatch crashed: ${(err as Error).message}`);
-    });
-}
 
 const VALID_COLUMNS = new Set<TaskColumn>([
   "backlog",
@@ -90,7 +63,6 @@ export async function POST(req: Request): Promise<Response> {
       ? body.tag
       : undefined;
 
-  let createdTask: Task | null = null;
   const next = await getStore().update((draft) => {
     const task: Task = {
       id: newId("T"),
@@ -100,9 +72,7 @@ export async function POST(req: Request): Promise<Response> {
       createdAt: Date.now(),
     };
     draft.tasks.push(task);
-    createdTask = task;
   });
-  if (createdTask) fireWebhook("task.created", null, createdTask);
   return NextResponse.json({ tasks: next.tasks });
 }
 
@@ -126,13 +96,10 @@ export async function PATCH(req: Request): Promise<Response> {
     return NextResponse.json({ error: "missing_id" }, { status: 400 });
   }
   let found = false;
-  let beforeTask: Task | null = null;
-  let afterTask: Task | null = null;
   const next = await getStore().update((draft) => {
     const task = draft.tasks.find((t) => t.id === id);
     if (!task) return;
     found = true;
-    beforeTask = structuredClone(task);
     if (
       typeof body.column === "string" &&
       VALID_COLUMNS.has(body.column as TaskColumn)
@@ -157,18 +124,9 @@ export async function PATCH(req: Request): Promise<Response> {
         task.subtasks = normalizeSubtasks(body.subtasks);
       }
     }
-    afterTask = structuredClone(task);
   });
   if (!found) {
     return NextResponse.json({ error: "task_not_found" }, { status: 404 });
-  }
-  if (beforeTask && afterTask) {
-    // `let` + closure capture defeats TS's null narrowing here, so
-    // we re-assert the non-null type after the runtime check.
-    const b: Task = beforeTask;
-    const a: Task = afterTask;
-    const moved = b.column !== a.column;
-    fireWebhook(moved ? "task.moved" : "task.updated", b, a);
   }
   return NextResponse.json({ tasks: next.tasks });
 }
@@ -188,12 +146,8 @@ export async function DELETE(req: Request): Promise<Response> {
   if (!id) {
     return NextResponse.json({ error: "missing_id" }, { status: 400 });
   }
-  let deletedTask: Task | null = null;
   const next = await getStore().update((draft) => {
-    const existing = draft.tasks.find((t) => t.id === id);
-    if (existing) deletedTask = structuredClone(existing);
     draft.tasks = draft.tasks.filter((t) => t.id !== id);
   });
-  if (deletedTask) fireWebhook("task.deleted", deletedTask, null);
   return NextResponse.json({ tasks: next.tasks });
 }

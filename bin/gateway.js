@@ -473,7 +473,7 @@ function startProxy(config, accessToken, accountId) {
           const anthReq = JSON.parse(body);
 
           const oaiPayload = {
-            model: config.default_model || 'gpt-5.4',
+            model: config.default_model || 'gpt-5.3-codex',
             stream: true,
             store: false,
             instructions: typeof anthReq.system === 'string' ? anthReq.system : (JSON.stringify(anthReq.system) || ''),
@@ -723,7 +723,7 @@ async function main() {
   
   // Override for Codex responses API
   config.target_api_url = 'https://chatgpt.com/backend-api/codex/responses';
-  config.default_model = 'gpt-5.4';
+  config.default_model = 'gpt-5.3-codex';
 
   console.log('\n╔══════════════════════════════════════════════════╗');
   console.log('║     🚀 Claude Codex — Anthropic-shaped Gateway   ║');

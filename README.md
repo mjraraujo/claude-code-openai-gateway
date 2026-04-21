@@ -129,7 +129,7 @@ Then click **Sign in** on the dashboard, complete the OpenAI device-code flow in
 
 * **Ports** — only the dashboard (`127.0.0.1:3000` by default) is published. The gateway proxy on port `18923` is **container-internal**: it binds to `127.0.0.1` inside the container and is reached by the dashboard over container loopback. There is no host port for `18923`, so it cannot be exposed by accident. If you want to use the gateway from your *host's* Claude Code CLI, run `claude-codex-gateway --serve` directly on the host instead of routing through Docker.
 * **Volumes**
-  * `claude-codex-state` (named) → `/root/.codex-gateway` — OAuth token + dashboard state. Survives `down` / image rebuilds.
+  * `claude-codex-state` (named) → `/home/claude/.codex-gateway` — OAuth token + dashboard state. Survives `down` / image rebuilds.
   * `./workspace` (bind) → `/workspace` — the directory the dashboard's filesystem + exec tools operate on. Auto-created on first `up` if missing.
 * **Healthcheck** — `wget` against `/api/auth/status` every 30 s (defined in `Dockerfile`).
 * **Restart policy** — `unless-stopped`.
@@ -332,18 +332,18 @@ Everything stateful lives in the `claude-codex-state` named volume. Compose pref
 docker compose run --rm --no-deps \
   -v "$PWD":/backup \
   --entrypoint sh claude-codex \
-  -c 'cd /root/.codex-gateway && tar czf /backup/claude-codex-state-$(date +%F).tgz .'
+  -c 'cd /home/claude/.codex-gateway && tar czf /backup/claude-codex-state-$(date +%F).tgz .'
 
 # Restore (stop the service first so nothing is writing to the volume)
 docker compose stop claude-codex
 docker compose run --rm --no-deps \
   -v "$PWD":/backup \
   --entrypoint sh claude-codex \
-  -c 'cd /root/.codex-gateway && tar xzf /backup/claude-codex-state-YYYY-MM-DD.tgz'
+  -c 'cd /home/claude/.codex-gateway && tar xzf /backup/claude-codex-state-YYYY-MM-DD.tgz'
 docker compose start claude-codex
 
 # Force re-login (delete the cached token)
-docker compose exec claude-codex rm -f /root/.codex-gateway/token.json
+docker compose exec claude-codex rm -f /home/claude/.codex-gateway/token.json
 docker compose restart claude-codex
 ```
 

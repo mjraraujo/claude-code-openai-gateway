@@ -23,6 +23,14 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 
+import type { SdlcState } from "./sdlc";
+import { INITIAL_SDLC_STATE } from "./sdlc";
+
+// Re-exported for convenience so drive-v2 / route handlers don't
+// have to dual-import from store + sdlc.
+export { INITIAL_SDLC_STATE };
+export type { SdlcState };
+
 export type AgentStatus = "active" | "idle" | "blocked";
 
 export interface AgentState {
@@ -53,15 +61,23 @@ export interface AgentState {
 export type RufloPersona = "core" | "impl" | "review";
 
 /**
- * Outbound webhook configuration. When `enabled` and `url` are set,
- * Kanban transitions POST a JSON payload to `url` (best-effort, never
- * blocks the API response). `secret`, when present, is used to compute
- * an HMAC-SHA256 signature in the `X-Claude-Codex-Signature` header.
+ * Auto-drive operating mode.
+ *
+ *   - "bounded"  — original behaviour: hard caps on steps, wall-time,
+ *     and bytes. Safe default for one-shot tasks invoked from a Kanban
+ *     card or from the Engage modal.
+ *   - "endless"  — the v2 "deliver until done" mode: removes the
+ *     step/wall/byte caps, walks an SDLC state machine, and only
+ *     terminates when every gate is green or the operator hits the
+ *     kill switch. The circuit breaker is still in effect with
+ *     larger thresholds.
  */
-export interface WebhookConfig {
-  url: string;
-  secret?: string;
-  enabled: boolean;
+export type DriveMode = "bounded" | "endless";
+
+export const VALID_DRIVE_MODES: readonly DriveMode[] = ["bounded", "endless"];
+
+export function isValidDriveMode(value: unknown): value is DriveMode {
+  return value === "bounded" || value === "endless";
 }
 
 export interface HarnessState {
@@ -89,10 +105,11 @@ export interface HarnessState {
    */
   persona: RufloPersona;
   /**
-   * Optional outbound webhook for Kanban transitions. `null` means
-   * disabled. See {@link WebhookConfig}.
+   * Default auto-drive mode used when the operator engages without
+   * an explicit override. Defaults to "bounded" so existing flows
+   * keep their safety rails; opt into "endless" for deliver-until-done.
    */
-  webhook: WebhookConfig | null;
+  driveMode: DriveMode;
 }
 
 export const VALID_PERSONAS: readonly RufloPersona[] = ["core", "impl", "review"];
@@ -114,31 +131,7 @@ export function personaAgentId(persona: RufloPersona): string {
   }
 }
 
-/** Max URL length accepted in `WebhookConfig.url`. */
-export const MAX_WEBHOOK_URL_LENGTH = 2048;
-/** Max secret length accepted in `WebhookConfig.secret`. */
-export const MAX_WEBHOOK_SECRET_LENGTH = 256;
-
-/**
- * Validate + normalize a webhook URL. Must parse as `http(s)://…` and
- * fit under {@link MAX_WEBHOOK_URL_LENGTH}. Returns the normalized
- * `URL.toString()` form on success, `null` otherwise.
- */
-export function normalizeWebhookUrl(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  if (!trimmed || trimmed.length > MAX_WEBHOOK_URL_LENGTH) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-  return parsed.toString();
-}
-
-export const DEFAULT_MODEL = "gpt-5.4";
+export const DEFAULT_MODEL = "gpt-5.3-codex";
 
 export interface CronJob {
   id: string;
@@ -212,6 +205,62 @@ export interface AutoDriveRun {
   bytesEmitted: number;
   /** Reason for ending (only set on terminal states). */
   reason?: string;
+  /**
+   * Drive mode this run was started under. Surfaced to the UI so the
+   * SDLC progress bar and "endless" indicator render correctly.
+   * Optional for backward-compat with runs persisted before v2.
+   */
+  mode?: DriveMode;
+  /**
+   * SDLC state machine snapshot. Present iff `mode === "endless"`.
+   */
+  sdlc?: SdlcState;
+}
+
+/**
+ * Snapshot of the most recent Three Amigos run, persisted on the
+ * runtime so the dashboard can rehydrate findings after a refresh
+ * without re-running the whole pass. Bounded by `normalizeAmigosReport`
+ * to keep `claude-codex.json` small.
+ *
+ * Mirrors the shape produced by `runAmigos()` in `./amigos.ts` —
+ * we don't import the type here to avoid a circular dep, since
+ * `amigos.ts` imports `DEFAULT_MODEL` from this module.
+ */
+export interface PersistedAmigoFinding {
+  persona: "business" | "dev" | "qa";
+  severity: "blocker" | "concern" | "info";
+  message: string;
+}
+export interface PersistedAmigoResult {
+  persona: "business" | "dev" | "qa";
+  ok: boolean;
+  summary: string;
+  findings: PersistedAmigoFinding[];
+  error?: string;
+}
+export interface PersistedScenarioReport {
+  featurePath: string;
+  scenarioId: string;
+  scenarioName: string;
+  verdict: "pass" | "concerns" | "fail";
+  findings: PersistedAmigoFinding[];
+  amigos: PersistedAmigoResult[];
+}
+export interface PersistedAmigosReport {
+  startedAt: number;
+  endedAt?: number;
+  scope:
+    | { type: "all" }
+    | { type: "feature"; path: string }
+    | { type: "scenario"; path: string; scenarioId: string };
+  total: number;
+  scanned: number;
+  pass: number;
+  concerns: number;
+  fail: number;
+  scenarios: PersistedScenarioReport[];
+  error?: string;
 }
 
 export interface RuntimeState {
@@ -225,6 +274,8 @@ export interface RuntimeState {
     /** Last 10 finished runs, newest first. */
     history: AutoDriveRun[];
   };
+  /** Last Three Amigos report, if any. */
+  amigosReport?: PersistedAmigosReport;
 }
 
 const CONFIG_DIR = path.join(
@@ -260,7 +311,7 @@ const DEFAULT_STATE: RuntimeState = {
     methodology: "Shape Up",
     devMode: "Spec Driven",
     persona: "core",
-    webhook: null,
+    driveMode: "bounded",
   },
   departments: [
     { id: "engineering", name: "Engineering", cron: [] },
@@ -370,8 +421,10 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
     merged.harness.persona = isValidPersona(parsed.harness.persona)
       ? parsed.harness.persona
       : "core";
-    // Webhook: only keep a config object that round-trips validation.
-    merged.harness.webhook = normalizeWebhook(parsed.harness.webhook);
+    // Drive mode: validate against the closed set or default to "bounded".
+    merged.harness.driveMode = isValidDriveMode(parsed.harness.driveMode)
+      ? parsed.harness.driveMode
+      : "bounded";
   }
   if (parsed.departments && Array.isArray(parsed.departments)) {
     merged.departments = parsed.departments.map((d) => ({
@@ -403,6 +456,9 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
       subtasks: normalizeSubtasks((t as { subtasks?: unknown }).subtasks),
     }));
   }
+  const reportRaw = (parsed as { amigosReport?: unknown }).amigosReport;
+  const report = normalizeAmigosReport(reportRaw);
+  if (report) merged.amigosReport = report;
   return merged;
 }
 
@@ -414,6 +470,149 @@ export function newId(prefix: string): string {
 export const MAX_SUBTASK_TITLE_LENGTH = 200;
 /** Max number of sub-tasks per card. Prevents unbounded growth. */
 export const MAX_SUBTASKS_PER_TASK = 50;
+
+/* ─── Three Amigos persisted-report bounds ─────────────────────────── */
+/** Max scenarios stored on disk. Older entries beyond this are dropped. */
+export const MAX_AMIGOS_SCENARIOS_PERSISTED = 200;
+/** Max findings per scenario kept on disk. */
+export const MAX_AMIGOS_FINDINGS_PER_SCENARIO = 30;
+/** Max chars per finding message kept on disk. */
+export const MAX_AMIGOS_FINDING_CHARS = 600;
+/** Max chars for a free-form summary string kept on disk. */
+export const MAX_AMIGOS_SUMMARY_CHARS = 600;
+
+const AMIGO_PERSONA_SET = new Set(["business", "dev", "qa"]);
+const AMIGO_SEVERITY_SET = new Set(["blocker", "concern", "info"]);
+const AMIGO_VERDICT_SET = new Set(["pass", "concerns", "fail"]);
+
+/**
+ * Coerce a deserialized `amigosReport` value into a bounded shape.
+ * Unknown / malformed input becomes `undefined` so the round-trip
+ * stays honest (no half-built reports). Caps array sizes and
+ * truncates long strings so the on-disk JSON stays small even after
+ * many runs.
+ */
+export function normalizeAmigosReport(
+  raw: unknown,
+): PersistedAmigosReport | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const startedAt = typeof r.startedAt === "number" ? r.startedAt : null;
+  if (startedAt === null) return undefined;
+  const scope = normalizeAmigosScope(r.scope);
+  if (!scope) return undefined;
+  const scenariosRaw = Array.isArray(r.scenarios) ? r.scenarios : [];
+  const scenarios: PersistedScenarioReport[] = [];
+  for (const s of scenariosRaw) {
+    if (scenarios.length >= MAX_AMIGOS_SCENARIOS_PERSISTED) break;
+    const norm = normalizeScenarioReport(s);
+    if (norm) scenarios.push(norm);
+  }
+  return {
+    startedAt,
+    endedAt: typeof r.endedAt === "number" ? r.endedAt : undefined,
+    scope,
+    total: clampInt32(r.total),
+    scanned: clampInt32(r.scanned),
+    pass: clampInt32(r.pass),
+    concerns: clampInt32(r.concerns),
+    fail: clampInt32(r.fail),
+    scenarios,
+    error: typeof r.error === "string" ? r.error.slice(0, 400) : undefined,
+  };
+}
+
+function normalizeAmigosScope(
+  raw: unknown,
+): PersistedAmigosReport["scope"] | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  if (s.type === "all") return { type: "all" };
+  if (s.type === "feature" && typeof s.path === "string") {
+    return { type: "feature", path: s.path.slice(0, 1024) };
+  }
+  if (
+    s.type === "scenario" &&
+    typeof s.path === "string" &&
+    typeof s.scenarioId === "string"
+  ) {
+    return {
+      type: "scenario",
+      path: s.path.slice(0, 1024),
+      scenarioId: s.scenarioId.slice(0, 200),
+    };
+  }
+  return null;
+}
+
+function normalizeScenarioReport(raw: unknown): PersistedScenarioReport | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const featurePath = typeof r.featurePath === "string" ? r.featurePath.slice(0, 1024) : "";
+  const scenarioId = typeof r.scenarioId === "string" ? r.scenarioId.slice(0, 200) : "";
+  const scenarioName = typeof r.scenarioName === "string" ? r.scenarioName.slice(0, 400) : "";
+  if (!featurePath || !scenarioId) return null;
+  const verdict = AMIGO_VERDICT_SET.has(r.verdict as string)
+    ? (r.verdict as PersistedScenarioReport["verdict"])
+    : "concerns";
+  const findings: PersistedAmigoFinding[] = [];
+  if (Array.isArray(r.findings)) {
+    for (const f of r.findings) {
+      if (findings.length >= MAX_AMIGOS_FINDINGS_PER_SCENARIO) break;
+      const norm = normalizeAmigoFinding(f);
+      if (norm) findings.push(norm);
+    }
+  }
+  const amigos: PersistedAmigoResult[] = [];
+  if (Array.isArray(r.amigos)) {
+    for (const a of r.amigos) {
+      if (amigos.length >= 3) break;
+      const norm = normalizeAmigoResult(a);
+      if (norm) amigos.push(norm);
+    }
+  }
+  return { featurePath, scenarioId, scenarioName, verdict, findings, amigos };
+}
+
+function normalizeAmigoFinding(raw: unknown): PersistedAmigoFinding | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (!AMIGO_PERSONA_SET.has(r.persona as string)) return null;
+  if (!AMIGO_SEVERITY_SET.has(r.severity as string)) return null;
+  const message = typeof r.message === "string" ? r.message.trim() : "";
+  if (!message) return null;
+  return {
+    persona: r.persona as PersistedAmigoFinding["persona"],
+    severity: r.severity as PersistedAmigoFinding["severity"],
+    message: message.slice(0, MAX_AMIGOS_FINDING_CHARS),
+  };
+}
+
+function normalizeAmigoResult(raw: unknown): PersistedAmigoResult | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (!AMIGO_PERSONA_SET.has(r.persona as string)) return null;
+  const findings: PersistedAmigoFinding[] = [];
+  if (Array.isArray(r.findings)) {
+    for (const f of r.findings) {
+      if (findings.length >= MAX_AMIGOS_FINDINGS_PER_SCENARIO) break;
+      const norm = normalizeAmigoFinding(f);
+      if (norm) findings.push(norm);
+    }
+  }
+  return {
+    persona: r.persona as PersistedAmigoResult["persona"],
+    ok: r.ok === true,
+    summary: typeof r.summary === "string" ? r.summary.slice(0, MAX_AMIGOS_SUMMARY_CHARS) : "",
+    findings,
+    error: typeof r.error === "string" ? r.error.slice(0, 400) : undefined,
+  };
+}
+
+function clampInt32(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.min(0x7fffffff, Math.floor(raw)));
+}
 
 /**
  * Coerce a deserialized value into a `SubTask[]`. Unknown / malformed
@@ -467,29 +666,6 @@ function normalizeAgent(raw: unknown): AgentState | null {
     department: dept || undefined,
     model: isValidModelId(model) ? model : undefined,
   };
-}
-
-/**
- * Coerce an arbitrary deserialized value into a {@link WebhookConfig}.
- * Returns `null` when the value is missing/invalid so the harness
- * field round-trips as "disabled" rather than a broken object.
- *
- * Exported so the `/api/runtime/webhook` PATCH handler can reuse the
- * exact same validation surface as the on-disk merge path.
- */
-export function normalizeWebhook(raw: unknown): WebhookConfig | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const url = normalizeWebhookUrl(r.url);
-  if (!url) return null;
-  const enabled = r.enabled === true;
-  const secret =
-    typeof r.secret === "string"
-      ? r.secret.slice(0, MAX_WEBHOOK_SECRET_LENGTH)
-      : undefined;
-  const out: WebhookConfig = { url, enabled };
-  if (secret) out.secret = secret;
-  return out;
 }
 
 /**

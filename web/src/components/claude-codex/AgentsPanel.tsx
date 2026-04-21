@@ -10,7 +10,6 @@ import type {
   HarnessState,
   RufloPersona,
   RuntimeState,
-  WebhookConfig,
 } from "@/lib/runtime";
 import { DEFAULT_MODEL_ID, MODEL_PRESETS, findPreset } from "@/lib/runtime/models";
 
@@ -298,17 +297,6 @@ export function AgentsPanel() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
-          webhook
-        </span>
-        <WebhookSection
-          config={harness?.webhook ?? null}
-          disabled={!harness}
-          onError={(msg) => setError(msg)}
-        />
-      </section>
-
-      <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
             departments
@@ -371,6 +359,9 @@ export function AgentsPanel() {
             {currentRun ? "stop" : "engage"}
           </span>
         </button>
+        {currentRun?.mode === "endless" && currentRun.sdlc ? (
+          <SdlcBar sdlc={currentRun.sdlc} />
+        ) : null}
         {(currentRun || lastRun) && (
           <button
             type="button"
@@ -409,10 +400,15 @@ export function AgentsPanel() {
       {showAutoDriveModal && (
         <AutoDriveConfirm
           busy={busy}
+          defaultMode={harness?.driveMode ?? "bounded"}
           onCancel={() => setShowAutoDriveModal(false)}
-          onConfirm={async (goal, maxSteps) => {
+          onConfirm={async (goal, maxSteps, driveMode) => {
             setShowAutoDriveModal(false);
-            await startAutoDrive({ goal, maxSteps }, setBusy, setError);
+            await startAutoDrive(
+              { goal, maxSteps, driveMode },
+              setBusy,
+              setError,
+            );
           }}
         />
       )}
@@ -473,7 +469,7 @@ export function AgentsPanel() {
 }
 
 async function startAutoDrive(
-  body: { goal: string; maxSteps?: number },
+  body: { goal: string; maxSteps?: number; driveMode?: "bounded" | "endless" },
   setBusy: (b: boolean) => void,
   setError: (e: string | null) => void,
 ): Promise<void> {
@@ -540,6 +536,57 @@ async function forceStopAutoDrive(
 }
 
 /* ─── small subcomponents ─────────────────────────────────────────── */
+
+/**
+ * SDLC progress strip shown while an endless-mode auto-drive is in
+ * flight. Renders one cell per stage with a colour matching the gate
+ * status (green/red/pending) and bolds the stage the loop is
+ * currently working on.
+ */
+function SdlcBar({ sdlc }: { sdlc: import("@/lib/runtime").SdlcState }) {
+  const STAGES = ["spec", "bdd", "impl", "test", "deploy"] as const;
+  return (
+    <div className="rounded-md border border-zinc-900 bg-zinc-950/40 px-2 py-1.5">
+      <div className="flex items-center justify-between text-[9px] uppercase tracking-[0.2em] text-zinc-500">
+        <span>sdlc</span>
+        <span className="text-zinc-600">
+          {sdlc.stage === "delivered" ? "delivered ✓" : `→ ${sdlc.stage}`}
+        </span>
+      </div>
+      <div className="mt-1.5 grid grid-cols-5 gap-1">
+        {STAGES.map((s) => {
+          const status = sdlc.gates[s];
+          const active = sdlc.stage === s;
+          const colour =
+            status === "green"
+              ? "bg-emerald-500/70"
+              : status === "red"
+                ? "bg-red-500/70"
+                : "bg-zinc-800";
+          return (
+            <div key={s} className="flex flex-col items-center gap-0.5">
+              <span
+                className={
+                  "block h-1.5 w-full rounded-full " +
+                  colour +
+                  (active ? " ring-1 ring-cyan-400/70" : "")
+                }
+              />
+              <span
+                className={
+                  "font-mono text-[9px] " +
+                  (active ? "text-cyan-300" : "text-zinc-500")
+                }
+              >
+                {s}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function Toggle({
   label,
@@ -671,15 +718,24 @@ function AddDepartmentButton({ onCreated }: { onCreated: () => void }) {
 
 function AutoDriveConfirm({
   busy,
+  defaultMode,
   onCancel,
   onConfirm,
 }: {
   busy: boolean;
+  defaultMode: "bounded" | "endless";
   onCancel: () => void;
-  onConfirm: (goal: string, maxSteps: number) => void;
+  onConfirm: (
+    goal: string,
+    maxSteps: number,
+    driveMode: "bounded" | "endless",
+  ) => void;
 }) {
   const [goal, setGoal] = useState("");
   const [maxSteps, setMaxSteps] = useState(8);
+  const [driveMode, setDriveMode] = useState<"bounded" | "endless">(
+    defaultMode,
+  );
   const ready = goal.trim().length > 0;
 
   return (
@@ -698,6 +754,55 @@ function AutoDriveConfirm({
           guardrails stop the run when any of them fires.
         </p>
         <div className="mt-4 space-y-3">
+          <fieldset className="block">
+            <legend className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+              mode
+            </legend>
+            <div className="mt-1 grid grid-cols-2 gap-2">
+              <label
+                className={
+                  "cursor-pointer rounded border px-2 py-1.5 text-xs " +
+                  (driveMode === "bounded"
+                    ? "border-zinc-500 bg-zinc-900 text-zinc-100"
+                    : "border-zinc-800 bg-black text-zinc-400 hover:border-zinc-700")
+                }
+              >
+                <input
+                  type="radio"
+                  name="drive-mode"
+                  value="bounded"
+                  checked={driveMode === "bounded"}
+                  onChange={() => setDriveMode("bounded")}
+                  className="sr-only"
+                />
+                <span className="font-medium">bounded</span>
+                <span className="block text-[10px] text-zinc-500">
+                  one shot · step / wall / byte caps
+                </span>
+              </label>
+              <label
+                className={
+                  "cursor-pointer rounded border px-2 py-1.5 text-xs " +
+                  (driveMode === "endless"
+                    ? "border-cyan-500/60 bg-cyan-500/10 text-cyan-100"
+                    : "border-zinc-800 bg-black text-zinc-400 hover:border-zinc-700")
+                }
+              >
+                <input
+                  type="radio"
+                  name="drive-mode"
+                  value="endless"
+                  checked={driveMode === "endless"}
+                  onChange={() => setDriveMode("endless")}
+                  className="sr-only"
+                />
+                <span className="font-medium">endless · SDLC</span>
+                <span className="block text-[10px] text-zinc-500">
+                  spec → bdd → impl → test → deploy · no caps
+                </span>
+              </label>
+            </div>
+          </fieldset>
           <label className="block text-xs">
             <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
               goal
@@ -710,26 +815,28 @@ function AutoDriveConfirm({
               className="mt-1 w-full rounded border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
             />
           </label>
-          <label className="block text-xs">
-            <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
-              max steps (1–50)
-            </span>
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={maxSteps}
-              onChange={(e) =>
-                setMaxSteps(Math.max(1, Math.min(50, Number(e.target.value) || 1)))
-              }
-              className="mt-1 w-24 rounded border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
-            />
-          </label>
+          {driveMode === "bounded" ? (
+            <label className="block text-xs">
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+                max steps (1–50)
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={maxSteps}
+                onChange={(e) =>
+                  setMaxSteps(Math.max(1, Math.min(50, Number(e.target.value) || 1)))
+                }
+                className="mt-1 w-24 rounded border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              />
+            </label>
+          ) : null}
         </div>
         <p className="mt-3 text-[11px] leading-4 text-zinc-500">
-          Server enforces a 5-minute wall-time and a 1 MB output budget on top
-          of step count. Without a Codex token the planner runs in mock mode
-          (no model calls) so you can verify the loop safely.
+          {driveMode === "bounded"
+            ? "Server enforces a 5-minute wall-time and a 1 MB output budget on top of step count. Without a Codex token the planner runs in mock mode (no model calls) so you can verify the loop safely."
+            : "Endless mode walks the SDLC state machine and only stops when every gate is green or you hit Stop. Step / wall / byte caps are disabled — circuit breaker stays in effect with larger thresholds."}
         </p>
         <div className="mt-6 flex justify-end gap-2">
           <button
@@ -742,7 +849,7 @@ function AutoDriveConfirm({
           <button
             type="button"
             disabled={!ready || busy}
-            onClick={() => onConfirm(goal.trim(), maxSteps)}
+            onClick={() => onConfirm(goal.trim(), maxSteps, driveMode)}
             className="rounded-md bg-red-500/90 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-50"
           >
             {busy ? "starting…" : "I understand — engage"}
@@ -1284,172 +1391,3 @@ function PersonaSelect({
   );
 }
 
-function WebhookSection({
-  config,
-  disabled,
-  onError,
-}: {
-  config: WebhookConfig | null;
-  disabled: boolean;
-  onError: (msg: string) => void;
-}) {
-  // Local edit buffer so the user can type without each keystroke
-  // round-tripping through the API. We push on Save / toggle.
-  const [url, setUrl] = useState(config?.url ?? "");
-  const [secret, setSecret] = useState(config?.secret ?? "");
-  const [busy, setBusy] = useState(false);
-  const [testStatus, setTestStatus] = useState<string | null>(null);
-  // Sync local buffer when the persisted config changes externally
-  // (e.g. SSE update from another tab).
-  useEffect(() => {
-    setUrl(config?.url ?? "");
-    setSecret(config?.secret ?? "");
-  }, [config?.url, config?.secret]);
-
-  const enabled = config?.enabled ?? false;
-  const hasConfig = !!config;
-
-  const patch = useCallback(
-    async (next: Partial<WebhookConfig> | null) => {
-      setBusy(true);
-      onError("");
-      try {
-        const res = await fetch("/api/runtime/webhook", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ webhook: next }),
-        });
-        if (!res.ok) {
-          const j = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(j.error || `webhook failed (${res.status})`);
-        }
-      } catch (err) {
-        onError((err as Error).message);
-      } finally {
-        setBusy(false);
-      }
-    },
-    [onError],
-  );
-
-  const save = () => {
-    void patch({
-      url,
-      secret: secret || undefined,
-      enabled: enabled || !hasConfig,
-    });
-  };
-
-  const toggle = () => {
-    if (!url) return;
-    void patch({ url, secret: secret || undefined, enabled: !enabled });
-  };
-
-  const clear = () => {
-    setUrl("");
-    setSecret("");
-    setTestStatus(null);
-    void patch(null);
-  };
-
-  const sendTest = async () => {
-    setBusy(true);
-    setTestStatus(null);
-    onError("");
-    try {
-      const res = await fetch("/api/runtime/webhook/test", { method: "POST" });
-      const j = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        status?: number;
-        error?: string;
-      };
-      if (!res.ok || j.ok === false) {
-        setTestStatus(`fail · ${j.error ?? `${j.status ?? res.status}`}`);
-      } else {
-        setTestStatus(`ok · ${j.status ?? "200"}`);
-      }
-    } catch (err) {
-      setTestStatus(`fail · ${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-2 rounded-md border border-zinc-900 bg-zinc-950/60 p-2.5 text-xs text-zinc-300">
-      <Field label="URL">
-        <input
-          type="url"
-          inputMode="url"
-          placeholder="https://example.com/hooks/codex"
-          value={url}
-          disabled={disabled || busy}
-          onChange={(e) => setUrl(e.target.value)}
-          className="mt-1 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[11px] text-zinc-200 outline-none focus:border-zinc-700"
-        />
-      </Field>
-      <Field label="Secret (optional, HMAC-SHA256)">
-        <input
-          type="password"
-          autoComplete="off"
-          value={secret}
-          disabled={disabled || busy}
-          onChange={(e) => setSecret(e.target.value)}
-          className="mt-1 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[11px] text-zinc-200 outline-none focus:border-zinc-700"
-        />
-      </Field>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={save}
-          disabled={disabled || busy || !url}
-          className="rounded border border-zinc-800 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-300 hover:border-zinc-700 disabled:opacity-40"
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={toggle}
-          disabled={disabled || busy || !hasConfig}
-          aria-pressed={enabled}
-          className={
-            "rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition disabled:opacity-40 " +
-            (enabled
-              ? "border-emerald-700/60 bg-emerald-500/10 text-emerald-200"
-              : "border-zinc-800 text-zinc-400 hover:border-zinc-700")
-          }
-        >
-          {enabled ? "Enabled" : "Disabled"}
-        </button>
-        <button
-          type="button"
-          onClick={() => void sendTest()}
-          disabled={disabled || busy || !hasConfig || !enabled}
-          className="rounded border border-zinc-800 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-300 hover:border-zinc-700 disabled:opacity-40"
-        >
-          Send test
-        </button>
-        {hasConfig && (
-          <button
-            type="button"
-            onClick={clear}
-            disabled={disabled || busy}
-            className="ml-auto rounded border border-zinc-900 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500 hover:border-red-900/60 hover:text-red-300 disabled:opacity-40"
-          >
-            Clear
-          </button>
-        )}
-      </div>
-      {testStatus && (
-        <p
-          className={
-            "font-mono text-[10px] " +
-            (testStatus.startsWith("ok") ? "text-emerald-400" : "text-red-400")
-          }
-        >
-          {testStatus}
-        </p>
-      )}
-    </div>
-  );
-}
