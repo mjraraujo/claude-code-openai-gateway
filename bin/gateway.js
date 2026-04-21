@@ -40,7 +40,28 @@ const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const CONFIG_DIR = path.join(process.env.HOME || '~', '.codex-gateway');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const TOKEN_FILE = path.join(CONFIG_DIR, 'token.json');
-const PROXY_PORT = 18923;
+// Port chosen at startup (mutable). Seeded from $CODEX_GATEWAY_PORT
+// (operator override) and falls back to the historical 18923. When the
+// preferred port is occupied by a non-gateway process we may pick a
+// different one from PORT_FALLBACK_RANGE; the final value is written
+// to PORT_FILE so the Next.js dashboard can find us.
+const DEFAULT_PROXY_PORT = 18923;
+const PORT_FALLBACK_RANGE_END = 18933; // inclusive — 11 ports total
+let PROXY_PORT = (() => {
+  const raw = process.env.CODEX_GATEWAY_PORT;
+  if (!raw) return DEFAULT_PROXY_PORT;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1 || n > 65535) {
+    console.warn(`  ⚠️  Ignoring invalid CODEX_GATEWAY_PORT=${raw}`);
+    return DEFAULT_PROXY_PORT;
+  }
+  return n;
+})();
+const PORT_FILE = path.join(CONFIG_DIR, 'port');
+// Sentinel route used by `probeGatewayHealth()` to recognise an
+// already-running claude-codex gateway when EADDRINUSE fires.
+const HEALTH_PATH = '/__gateway';
+const HEALTH_BODY = 'claude-codex-gateway';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -79,6 +100,97 @@ function loadToken() {
 function saveToken(tokenData) {
   ensureConfigDir();
   fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokenData, null, 2), { mode: 0o600 });
+}
+
+// ─── Port discovery helpers ──────────────────────────────────────────────────
+
+/**
+ * Persist the chosen port so the Next.js dashboard (and any other
+ * consumer using `web/src/lib/runtime/gateway.ts`) can locate the
+ * gateway when it isn't on the default 18923. Best-effort — failures
+ * are logged but never fatal, since the port file is just a hint.
+ */
+function writePortFile(port) {
+  try {
+    ensureConfigDir();
+    fs.writeFileSync(PORT_FILE, String(port) + '\n', { mode: 0o600 });
+  } catch (e) {
+    console.warn(`  ⚠️  Could not write port file ${PORT_FILE}: ${e.message}`);
+  }
+}
+
+/**
+ * Probe a local port for an existing claude-codex gateway. Returns
+ * true only if the sentinel `GET /__gateway` route responds with the
+ * expected body within `timeoutMs`. Any other response (including
+ * connection-refused or a non-gateway HTTP server) returns false, so
+ * we never confuse an unrelated service for our own.
+ */
+function probeGatewayHealth(port, timeoutMs = 750) {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        method: 'GET',
+        path: HEALTH_PATH,
+        timeout: timeoutMs,
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          return resolve(false);
+        }
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { body += chunk; if (body.length > 256) req.destroy(); });
+        res.on('end', () => resolve(body.trim() === HEALTH_BODY));
+        res.on('error', () => resolve(false));
+      },
+    );
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+    req.end();
+  });
+}
+
+/**
+ * Try to bind to `port` on 127.0.0.1 to confirm it is free. Resolves
+ * to true if the port is available, false on EADDRINUSE / EACCES,
+ * and rejects on truly unexpected errors so we don't silently swallow
+ * something interesting (e.g. ENFILE).
+ */
+function isPortFree(port) {
+  return new Promise((resolve, reject) => {
+    const probe = http.createServer();
+    probe.unref();
+    probe.once('error', (err) => {
+      if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+        resolve(false);
+      } else {
+        reject(err);
+      }
+    });
+    probe.listen(port, '127.0.0.1', () => {
+      probe.close(() => resolve(true));
+    });
+  });
+}
+
+/**
+ * Linear scan over the fallback range looking for a free port. Skips
+ * the seed value so callers know the result is genuinely different.
+ */
+async function findFreePort(seed, end) {
+  for (let p = seed; p <= end; p++) {
+    if (p === PROXY_PORT) continue; // skip the one that already failed
+    try {
+      if (await isPortFree(p)) return p;
+    } catch {
+      // Treat unexpected errors as "not usable" and keep scanning.
+    }
+  }
+  return null;
 }
 
 function ask(question) {
@@ -337,8 +449,18 @@ function mapMessagesToResponses(anthMessages) {
 }
 
 function startProxy(config, accessToken, accountId) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let resolved = false; // guards against the original listen() callback
+                          // firing again after a fallback rebind below.
     const server = http.createServer((req, res) => {
+      // Sentinel route for sibling-process detection. Must be cheap,
+      // unauthenticated, and unmistakably ours so probeGatewayHealth()
+      // can recognise an existing gateway when EADDRINUSE fires.
+      if (req.method === 'GET' && req.url === HEALTH_PATH) {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        return res.end(HEALTH_BODY);
+      }
+
       if (req.method !== 'POST') {
         res.writeHead(404);
         return res.end('Not Found');
@@ -507,17 +629,36 @@ function startProxy(config, accessToken, accountId) {
       });
     });
 
-    server.on('error', (err) => {
+    server.on('error', async (err) => {
       if (err && err.code === 'EADDRINUSE') {
-        console.error(`\n  ❌ Port ${PROXY_PORT} is already in use.`);
-        console.error(`     Another claude-codex gateway (or the Docker entrypoint) is`);
-        console.error(`     probably already serving on 127.0.0.1:${PROXY_PORT}. Use the`);
-        console.error(`     existing instance via the \`claude-codex\` CLI wrapper, or`);
-        console.error(`     stop the other process before starting a new one.\n`);
-        process.exit(2);
+        // Try to fall back to another port in our reserved range. We
+        // intentionally do NOT kill whatever owns the conflicting port
+        // — gateway.js runs as the user, so killing arbitrary PIDs
+        // would be a footgun. Reuse-detection lives one layer up in
+        // main(), which probes the port before calling startProxy.
+        const fallback = await findFreePort(DEFAULT_PROXY_PORT, PORT_FALLBACK_RANGE_END);
+        if (fallback !== null) {
+          console.warn(`  ⚠️  Port ${PROXY_PORT} in use — falling back to ${fallback}`);
+          PROXY_PORT = fallback;
+          // Rebind on the new port. Listening twice on one server
+          // throws, but our previous listen() never bound (it errored
+          // synchronously into this handler), so this is safe.
+          server.listen(PROXY_PORT, '127.0.0.1', () => {
+            if (resolved) return;
+            resolved = true;
+            writePortFile(PROXY_PORT);
+            console.log(`  ✅ Proxy running on http://127.0.0.1:${PROXY_PORT}`);
+            resolve(server);
+          });
+          return;
+        }
+        console.error(`\n  ❌ No free port found in ${DEFAULT_PROXY_PORT}-${PORT_FALLBACK_RANGE_END}.`);
+        console.error(`     Stop the conflicting process or set CODEX_GATEWAY_PORT to`);
+        console.error(`     another value before retrying.\n`);
+        return reject(err);
       }
       console.error(`\n  ❌ Proxy server error: ${err && err.message ? err.message : err}\n`);
-      process.exit(1);
+      reject(err);
     });
 
     // Bind to loopback only. The proxy has no authentication of its
@@ -526,6 +667,9 @@ function startProxy(config, accessToken, accountId) {
     // Docker image Mission Control runs in the same container and
     // reaches us over container loopback, so 127.0.0.1 is sufficient.
     server.listen(PROXY_PORT, '127.0.0.1', () => {
+      if (resolved) return;
+      resolved = true;
+      writePortFile(PROXY_PORT);
       console.log(`  ✅ Proxy running on http://127.0.0.1:${PROXY_PORT}`);
       resolve(server);
     });
@@ -624,17 +768,39 @@ async function main() {
   const bearerToken = tokenData.access_token;
   const accountId = getAccountId(tokenData.id_token);
 
-  // Start proxy
-  console.log('  🔄 Starting streaming proxy (Anthropic → ChatGPT Codex backend)...');
-  const proxyServer = await startProxy(config, bearerToken, accountId);
+  // Reuse path: in interactive mode, if our preferred port already
+  // belongs to a healthy claude-codex gateway (e.g. the operator left
+  // one running, or the Docker entrypoint owns :18923), don't try to
+  // start a second proxy — just point Claude at the existing one. We
+  // skip this in --serve mode because that path is the one that
+  // *provides* the gateway; the dashboard polls token.json and would
+  // never see progress otherwise.
+  let proxyServer = null;
+  let reusedExistingGateway = false;
+  if (!isServe) {
+    const healthy = await probeGatewayHealth(PROXY_PORT);
+    if (healthy) {
+      console.log(`  ♻️  Reusing existing claude-codex gateway on 127.0.0.1:${PROXY_PORT}`);
+      reusedExistingGateway = true;
+      // Make sure the port file matches reality so the dashboard
+      // resolves the same URL we're about to hand to Claude.
+      writePortFile(PROXY_PORT);
+    }
+  }
+
+  if (!reusedExistingGateway) {
+    // Start proxy
+    console.log('  🔄 Starting streaming proxy (Anthropic → ChatGPT Codex backend)...');
+    proxyServer = await startProxy(config, bearerToken, accountId);
+  }
 
   // Headless mode: serve the proxy and stop here. Used by the Docker
   // container, which runs the Next.js dashboard alongside.
   if (isServe) {
     console.log(`  ✅ Proxy listening on port ${PROXY_PORT}`);
     console.log('  (--serve mode: not launching Claude)');
-    process.on('SIGINT', () => { proxyServer.close(); process.exit(0); });
-    process.on('SIGTERM', () => { proxyServer.close(); process.exit(0); });
+    process.on('SIGINT', () => { if (proxyServer) proxyServer.close(); process.exit(0); });
+    process.on('SIGTERM', () => { if (proxyServer) proxyServer.close(); process.exit(0); });
     return;
   }
 
@@ -668,6 +834,49 @@ async function main() {
     apiKeyHelper: keyHelperScript,
   }, null, 2), { mode: 0o600 });
 
+  // ── Argument sanitisation for the spawned `claude` process ──────────
+  //
+  // Two interactivity foot-guns the upstream CLI surfaces:
+  //
+  //   1. `--print` / `-p` puts the CLI in non-interactive print mode
+  //      and requires piped stdin. When the user runs `claude-codex
+  //      --print` from a terminal (no pipe) the CLI hangs ~3s and
+  //      then dies with "Input must be provided either through
+  //      stdin...". Detect that combination and drop the flag with a
+  //      warning so the chat opens normally.
+  //
+  //   2. The Write tool refuses to create new files unless an
+  //      explicit permission flag is set, leading to "ERR: refusing
+  //      to create new file" in agent runs. If the user hasn't
+  //      already specified a permission flag, default to
+  //      `--permission-mode acceptEdits` so the agent can create and
+  //      edit files inside its working directory. Read/Bash etc. are
+  //      unaffected — this is the same default the upstream CLI
+  //      offers via its TUI permission picker.
+  let claudeArgs = args.filter((a) => a !== '--login');
+
+  const stdinIsTty = Boolean(process.stdin.isTTY);
+  const printIdx = claudeArgs.findIndex((a) => a === '--print' || a === '-p');
+  if (printIdx !== -1 && stdinIsTty) {
+    console.warn(
+      '  ⚠️  --print/-p requires piped stdin; running interactively instead.\n' +
+      '      Pipe input (e.g. `echo "hi" | claude-codex --print`) to use print mode.',
+    );
+    claudeArgs.splice(printIdx, 1);
+  }
+
+  const hasPermissionFlag = claudeArgs.some(
+    (a) =>
+      a === '--permission-mode' ||
+      a.startsWith('--permission-mode=') ||
+      a === '--allowedTools' ||
+      a.startsWith('--allowedTools=') ||
+      a === '--dangerously-skip-permissions',
+  );
+  if (!hasPermissionFlag) {
+    claudeArgs.push('--permission-mode', 'acceptEdits');
+  }
+
   // Launch claude
   console.log('  🚀 Launching Claude Code through the claude-codex gateway...\n');
   console.log('  ─────────────────────────────────────────────────\n');
@@ -679,13 +888,15 @@ async function main() {
     CLAUDE_CONFIG_DIR: claudeConfigDir,
   };
 
-  const claude = spawn('claude', args.filter(a => a !== '--login'), {
+  const claude = spawn('claude', claudeArgs, {
     stdio: 'inherit',
     env: claudeEnv,
   });
 
+  const closeProxy = () => { if (proxyServer) proxyServer.close(); };
+
   claude.on('close', (code) => {
-    proxyServer.close();
+    closeProxy();
     process.exit(code || 0);
   });
 
@@ -695,12 +906,12 @@ async function main() {
     } else {
       console.error(`\n  ❌ Error: ${err.message}`);
     }
-    proxyServer.close();
+    closeProxy();
     process.exit(1);
   });
 
-  process.on('SIGINT', () => { claude.kill('SIGINT'); proxyServer.close(); });
-  process.on('SIGTERM', () => { claude.kill('SIGTERM'); proxyServer.close(); });
+  process.on('SIGINT', () => { claude.kill('SIGINT'); closeProxy(); });
+  process.on('SIGTERM', () => { claude.kill('SIGTERM'); closeProxy(); });
 }
 
 main().catch(err => {

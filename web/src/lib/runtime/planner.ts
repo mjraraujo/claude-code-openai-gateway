@@ -17,13 +17,10 @@
 
 import { getValidToken, getOrCreateSessionApiKey } from "@/lib/auth/storage";
 import { consumeAnthropicStream } from "@/lib/gateway/anthropicStream";
-import { readEnv } from "@/lib/env";
 
+import { getGatewayUrl } from "./gateway";
 import type { AutoDriveStep } from "./store";
 
-const GATEWAY_URL =
-  readEnv("CLAUDE_CODEX_GATEWAY_URL", "MISSION_CONTROL_GATEWAY_URL") ??
-  "http://127.0.0.1:18923/v1/messages";
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export type PlanAction =
@@ -115,7 +112,7 @@ async function livePlan(input: PlannerInput): Promise<Plan> {
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(GATEWAY_URL, {
+    res = await fetch(getGatewayUrl(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

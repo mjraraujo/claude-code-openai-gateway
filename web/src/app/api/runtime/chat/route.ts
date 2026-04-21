@@ -19,15 +19,11 @@ import { NextResponse } from "next/server";
 import { isSessionAuthenticated } from "@/lib/auth/session";
 import { getOrCreateSessionApiKey, getValidToken } from "@/lib/auth/storage";
 import { isValidModelId } from "@/lib/runtime";
-
-import { readEnv } from "@/lib/env";
+import { getGatewayUrl } from "@/lib/runtime/gateway";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const GATEWAY_URL =
-  readEnv("CLAUDE_CODEX_GATEWAY_URL", "MISSION_CONTROL_GATEWAY_URL") ??
-  "http://127.0.0.1:18923/v1/messages";
 const MAX_TOTAL_CHARS = 32_000;
 const MAX_PER_MESSAGE_CHARS = 16_000;
 const MAX_SYSTEM_CHARS = 8_000;
@@ -100,7 +96,7 @@ export async function POST(req: Request): Promise<Response> {
 
   let upstream: Response;
   try {
-    upstream = await fetch(GATEWAY_URL, {
+    upstream = await fetch(getGatewayUrl(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
