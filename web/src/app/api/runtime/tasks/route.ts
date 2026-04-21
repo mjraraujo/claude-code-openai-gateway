@@ -163,9 +163,12 @@ export async function PATCH(req: Request): Promise<Response> {
     return NextResponse.json({ error: "task_not_found" }, { status: 404 });
   }
   if (beforeTask && afterTask) {
-    const moved =
-      (beforeTask as Task).column !== (afterTask as Task).column;
-    fireWebhook(moved ? "task.moved" : "task.updated", beforeTask, afterTask);
+    // `let` + closure capture defeats TS's null narrowing here, so
+    // we re-assert the non-null type after the runtime check.
+    const b: Task = beforeTask;
+    const a: Task = afterTask;
+    const moved = b.column !== a.column;
+    fireWebhook(moved ? "task.moved" : "task.updated", b, a);
   }
   return NextResponse.json({ tasks: next.tasks });
 }

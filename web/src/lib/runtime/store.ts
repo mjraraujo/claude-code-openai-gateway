@@ -486,7 +486,7 @@ export function normalizeWebhook(raw: unknown): WebhookConfig | null {
   const secret =
     typeof r.secret === "string"
       ? r.secret.slice(0, MAX_WEBHOOK_SECRET_LENGTH)
-      : "";
+      : undefined;
   const out: WebhookConfig = { url, enabled };
   if (secret) out.secret = secret;
   return out;
