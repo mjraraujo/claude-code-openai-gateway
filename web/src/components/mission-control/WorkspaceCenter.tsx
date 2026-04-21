@@ -25,7 +25,7 @@ export interface WorkspaceCenterProps {
   hideTerminal?: boolean;
 }
 
-export function WorkspaceCenter({ hideTerminal = false }: WorkspaceCenterProps = {}) {
+export function WorkspaceCenter({ hideTerminal = false }: WorkspaceCenterProps) {
   const TABS = hideTerminal ? ALL_TABS.filter((t) => t.id !== "terminal") : ALL_TABS;
   const [tab, setTab] = useState<Tab>("workspace");
   // Track which tabs have been visited so each is mounted lazily on
