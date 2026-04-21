@@ -93,7 +93,8 @@ Progress so far:
     blocklist for the obvious destructive prefixes.
 - [x] **Step 6 — Agent runtime**
   - **In-process orchestrator** with persistent state at
-    `~/.codex-gateway/mission-control.json` (atomic write-rename).
+    `~/.codex-gateway/claude-codex.json` (atomic write-rename; legacy
+    `mission-control.json` is auto-migrated on first load).
     Single `EventEmitter`-backed store fans out updates to every SSE
     subscriber.
   - **Bounded tool surface** in `src/lib/runtime/tools.ts`:
@@ -128,7 +129,7 @@ Progress so far:
     jobs in place.
 - [x] **Step 7 — Polish**
   - **Kanban persistence**: tasks are stored in
-    `mission-control.json` alongside the rest of the runtime state
+    `claude-codex.json` alongside the rest of the runtime state
     and pushed to every tab via SSE. `POST|PATCH|DELETE
     /api/runtime/tasks` for create / move / delete. Seed cards
     (T-101 → T-106) land in "Shipped" reflecting their real status.

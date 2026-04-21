@@ -72,7 +72,7 @@ describe("runtime store · update + persistence", () => {
     // Wait for the queued atomic write to flush.
     await new Promise((r) => setTimeout(r, 50));
 
-    const stateFile = path.join(tmpDir, ".codex-gateway", "mission-control.json");
+    const stateFile = path.join(tmpDir, ".codex-gateway", "claude-codex.json");
     const raw = await fs.readFile(stateFile, "utf8");
     const parsed = JSON.parse(raw);
     expect(parsed.harness.model).toBe("claude-haiku-4.5");
@@ -137,7 +137,7 @@ describe("runtime store · mergeWithDefaults (reload)", () => {
     const dir = path.join(tmpDir, ".codex-gateway");
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     await fs.writeFile(
-      path.join(dir, "mission-control.json"),
+      path.join(dir, "claude-codex.json"),
       JSON.stringify({
         harness: { autoApproveSafeEdits: false, model: 42 },
       }),
@@ -153,7 +153,7 @@ describe("runtime store · mergeWithDefaults (reload)", () => {
     const dir = path.join(tmpDir, ".codex-gateway");
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     await fs.writeFile(
-      path.join(dir, "mission-control.json"),
+      path.join(dir, "claude-codex.json"),
       JSON.stringify({
         autoDrive: {
           current: {
@@ -177,7 +177,7 @@ describe("runtime store · mergeWithDefaults (reload)", () => {
     const dir = path.join(tmpDir, ".codex-gateway");
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     await fs.writeFile(
-      path.join(dir, "mission-control.json"),
+      path.join(dir, "claude-codex.json"),
       JSON.stringify({
         tasks: [
           { id: "T-x", title: "bad col", column: "garbage", createdAt: 1 },
@@ -187,5 +187,68 @@ describe("runtime store · mergeWithDefaults (reload)", () => {
     const { getStore } = await importStore();
     const snap = await getStore().snapshot();
     expect(snap.tasks.find((t) => t.id === "T-x")?.column).toBe("backlog");
+  });
+
+  it("migrates the legacy mission-control.json filename on first load", async () => {
+    const dir = path.join(tmpDir, ".codex-gateway");
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    // Only the legacy file exists — the new-name file is absent.
+    await fs.writeFile(
+      path.join(dir, "mission-control.json"),
+      JSON.stringify({ harness: { model: "gpt-4o" } }),
+    );
+    const { getStore } = await importStore();
+    const snap = await getStore().snapshot();
+    expect(snap.harness.model).toBe("gpt-4o");
+    // The rename side-effect moves legacy -> new filename.
+    const newExists = await fs
+      .stat(path.join(dir, "claude-codex.json"))
+      .then(() => true)
+      .catch(() => false);
+    const legacyExists = await fs
+      .stat(path.join(dir, "mission-control.json"))
+      .then(() => true)
+      .catch(() => false);
+    expect(newExists).toBe(true);
+    expect(legacyExists).toBe(false);
+  });
+});
+
+describe("runtime store · normalizeSubtasks", () => {
+  it("drops malformed items and clamps to the per-task cap", async () => {
+    const { normalizeSubtasks, MAX_SUBTASKS_PER_TASK } = await importStore();
+    const out = normalizeSubtasks([
+      { id: "s1", title: "ok", done: true },
+      { id: "", title: "missing id" },
+      { id: "s2", title: "" },
+      { id: "s3", title: "   whitespace-ok  ", done: "truthy-but-not-bool" },
+      null,
+      "string",
+      { id: "s4", title: "x".repeat(500) },
+    ]);
+    expect(out).toBeDefined();
+    const list = out!;
+    expect(list.map((s) => s.id)).toEqual(["s1", "s3", "s4"]);
+    // Non-boolean `done` coerces to false (strict equality check).
+    expect(list[1].done).toBe(false);
+    // Title is trimmed + capped at 200.
+    expect(list[1].title).toBe("whitespace-ok");
+    expect(list[2].title.length).toBe(200);
+
+    // Cap enforcement.
+    const many = Array.from({ length: MAX_SUBTASKS_PER_TASK + 5 }, (_, i) => ({
+      id: `s${i}`,
+      title: `t${i}`,
+    }));
+    expect(normalizeSubtasks(many)!.length).toBe(MAX_SUBTASKS_PER_TASK);
+  });
+
+  it("returns undefined for non-array or empty input", async () => {
+    const { normalizeSubtasks } = await importStore();
+    expect(normalizeSubtasks(undefined)).toBeUndefined();
+    expect(normalizeSubtasks(null)).toBeUndefined();
+    expect(normalizeSubtasks("nope")).toBeUndefined();
+    expect(normalizeSubtasks([])).toBeUndefined();
+    expect(normalizeSubtasks([{ id: "", title: "" }])).toBeUndefined();
   });
 });

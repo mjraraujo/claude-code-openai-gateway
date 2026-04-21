@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { isSessionAuthenticated } from "@/lib/auth/session";
-import { getStore, newId, type Task, type TaskColumn } from "@/lib/runtime";
+import {
+  getStore,
+  newId,
+  normalizeSubtasks,
+  type Task,
+  type TaskColumn,
+} from "@/lib/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +31,7 @@ interface PatchBody {
   column?: unknown;
   title?: unknown;
   runId?: unknown;
+  subtasks?: unknown;
 }
 
 interface DeleteBody {
@@ -106,6 +113,16 @@ export async function PATCH(req: Request): Promise<Response> {
       task.runId = undefined;
     } else if (typeof body.runId === "string") {
       task.runId = body.runId;
+    }
+    if (body.subtasks !== undefined) {
+      // Full-array replacement: clients send the whole checklist,
+      // server normalizes + clamps. A null or empty array clears the
+      // list (stored as `undefined` to keep JSON minimal).
+      if (body.subtasks === null) {
+        task.subtasks = undefined;
+      } else {
+        task.subtasks = normalizeSubtasks(body.subtasks);
+      }
     }
   });
   if (!found) {

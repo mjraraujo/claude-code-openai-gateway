@@ -1,5 +1,5 @@
-import { MissionControl } from "@/components/mission-control";
+import { ClaudeCodex } from "@/components/claude-codex";
 
 export default function Home() {
-  return <MissionControl />;
+  return <ClaudeCodex />;
 }

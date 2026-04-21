@@ -4,9 +4,25 @@ import { useEffect, useRef, useState } from "react";
 
 import type {
   RuntimeState,
+  SubTask,
   Task,
   TaskColumn,
 } from "@/lib/runtime";
+
+/** Must match the server-side constants in `lib/runtime/store.ts`. */
+const MAX_SUBTASK_TITLE_LENGTH = 200;
+const MAX_SUBTASKS_PER_TASK = 50;
+
+/** Client-side id for new sub-tasks. Doesn't need to be unguessable —
+ * the server re-validates every PATCH, and ids only need to be
+ * locally unique within a card. `crypto.randomUUID` ships in all
+ * evergreen browsers and is available in the Edge runtime too. */
+function newSubtaskId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `s_${crypto.randomUUID()}`;
+  }
+  return `s_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+}
 
 const COLUMNS: { id: TaskColumn; title: string }[] = [
   { id: "backlog", title: "Backlog" },
@@ -131,6 +147,28 @@ export function KanbanPanel() {
         body: JSON.stringify({ id, title: trimmed }),
       });
       if (!res.ok) throw new Error(`rename failed (${res.status})`);
+      return true;
+    } catch (err) {
+      setError((err as Error).message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateSubtasks = async (
+    id: string,
+    subtasks: SubTask[],
+  ): Promise<boolean> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/runtime/tasks", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, subtasks }),
+      });
+      if (!res.ok) throw new Error(`subtasks failed (${res.status})`);
       return true;
     } catch (err) {
       setError((err as Error).message);
@@ -353,6 +391,7 @@ export function KanbanPanel() {
                     busy={busy}
                     onMove={moveCard}
                     onRename={renameCard}
+                    onUpdateSubtasks={updateSubtasks}
                     onDelete={deleteCard}
                     onRun={runCard}
                   />
@@ -378,6 +417,7 @@ interface TaskCardProps {
   busy: boolean;
   onMove: (id: string, column: TaskColumn) => void;
   onRename: (id: string, title: string) => Promise<boolean>;
+  onUpdateSubtasks: (id: string, subtasks: SubTask[]) => Promise<boolean>;
   onDelete: (id: string) => void;
   onRun: (task: Task) => void;
 }
@@ -389,6 +429,7 @@ function TaskCard({
   busy,
   onMove,
   onRename,
+  onUpdateSubtasks,
   onDelete,
   onRun,
 }: TaskCardProps) {
@@ -396,8 +437,13 @@ function TaskCard({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(task.title);
   const [dragging, setDragging] = useState(false);
+  const [subDraft, setSubDraft] = useState("");
+  const [showAddSub, setShowAddSub] = useState(false);
   const editRef = useRef<HTMLInputElement | null>(null);
+  const subInputRef = useRef<HTMLInputElement | null>(null);
   const isRunning = task.runId && task.runId === currentRunId;
+  const subtasks = task.subtasks ?? [];
+  const doneCount = subtasks.filter((s) => s.done).length;
 
   // Keep the inline edit buffer in sync with upstream renames /
   // SSE pushes whenever we're not actively editing.
@@ -411,6 +457,40 @@ function TaskCard({
       editRef.current?.select();
     }
   }, [editing]);
+
+  useEffect(() => {
+    if (showAddSub) subInputRef.current?.focus();
+  }, [showAddSub]);
+
+  const toggleSubtask = (sid: string) => {
+    const next = subtasks.map((s) =>
+      s.id === sid ? { ...s, done: !s.done } : s,
+    );
+    void onUpdateSubtasks(task.id, next);
+  };
+
+  const deleteSubtask = (sid: string) => {
+    void onUpdateSubtasks(
+      task.id,
+      subtasks.filter((s) => s.id !== sid),
+    );
+  };
+
+  const addSubtask = async () => {
+    const trimmed = subDraft.trim().slice(0, MAX_SUBTASK_TITLE_LENGTH);
+    if (!trimmed) return;
+    if (subtasks.length >= MAX_SUBTASKS_PER_TASK) return;
+    const next: SubTask[] = [
+      ...subtasks,
+      { id: newSubtaskId(), title: trimmed, done: false },
+    ];
+    const ok = await onUpdateSubtasks(task.id, next);
+    if (ok) {
+      setSubDraft("");
+      // Leave the input open so the user can quickly add several;
+      // Escape / blur collapses it (handled below).
+    }
+  };
 
   const commitEdit = async () => {
     const next = draft.trim();
@@ -459,6 +539,18 @@ function TaskCard({
                 running
               </span>
             )}
+            {subtasks.length > 0 && (
+              <span
+                title={`${doneCount} of ${subtasks.length} sub-tasks complete`}
+                className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${
+                  doneCount === subtasks.length
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "bg-zinc-800 text-zinc-400"
+                }`}
+              >
+                ☑ {doneCount}/{subtasks.length}
+              </span>
+            )}
           </div>
           {editing ? (
             <input
@@ -499,6 +591,83 @@ function TaskCard({
         </button>
       </div>
 
+      {(subtasks.length > 0 || showAddSub) && (
+        <ul
+          // Stop drag + pointer events bubbling up so interacting
+          // with a checkbox / delete × doesn't start a card drag.
+          onPointerDown={(e) => e.stopPropagation()}
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+          className="mt-2 flex flex-col gap-0.5 border-t border-zinc-900 pt-2"
+        >
+          {subtasks.map((s) => (
+            <li
+              key={s.id}
+              className="group flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-zinc-900/40"
+            >
+              <input
+                type="checkbox"
+                checked={s.done}
+                disabled={busy}
+                onChange={() => toggleSubtask(s.id)}
+                className="h-3 w-3 shrink-0 cursor-pointer accent-emerald-500"
+              />
+              <span
+                className={`flex-1 truncate text-[11px] leading-5 ${
+                  s.done ? "text-zinc-600 line-through" : "text-zinc-300"
+                }`}
+              >
+                {s.title}
+              </span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => deleteSubtask(s.id)}
+                title="Remove sub-task"
+                className="shrink-0 rounded px-1 text-[10px] text-zinc-700 opacity-0 transition hover:text-red-400 group-hover:opacity-100 disabled:opacity-50"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+          {showAddSub && (
+            <li className="mt-1 flex items-center gap-1.5">
+              <input
+                ref={subInputRef}
+                value={subDraft}
+                onChange={(e) =>
+                  setSubDraft(e.target.value.slice(0, MAX_SUBTASK_TITLE_LENGTH))
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void addSubtask();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    setSubDraft("");
+                    setShowAddSub(false);
+                  }
+                }}
+                onBlur={() => {
+                  if (!subDraft.trim()) setShowAddSub(false);
+                }}
+                placeholder="Add sub-task…"
+                disabled={busy}
+                className="flex-1 rounded border border-zinc-800 bg-black px-1.5 py-0.5 text-[11px] text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              />
+              <button
+                type="button"
+                disabled={busy || !subDraft.trim()}
+                onClick={addSubtask}
+                className="rounded border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300 hover:border-zinc-700 disabled:opacity-50"
+              >
+                add
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+
       {open && (
         <div className="mt-2 flex flex-wrap gap-1.5 border-t border-zinc-900 pt-2">
           {/* Move to column selector */}
@@ -528,6 +697,23 @@ function TaskCard({
             className="rounded border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300 hover:border-zinc-700 disabled:opacity-50"
           >
             ✎ edit
+          </button>
+          {/* Add sub-task */}
+          <button
+            type="button"
+            disabled={busy || subtasks.length >= MAX_SUBTASKS_PER_TASK}
+            onClick={() => {
+              setShowAddSub(true);
+              setOpen(false);
+            }}
+            title={
+              subtasks.length >= MAX_SUBTASKS_PER_TASK
+                ? `sub-task limit (${MAX_SUBTASKS_PER_TASK}) reached`
+                : "Add a sub-task"
+            }
+            className="rounded border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300 hover:border-zinc-700 disabled:opacity-50"
+          >
+            + sub-task
           </button>
           {/* Run with auto-drive */}
           {task.column !== "shipped" && (

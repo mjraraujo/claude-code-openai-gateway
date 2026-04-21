@@ -321,7 +321,7 @@ The gateway also reads its own config files from `~/.codex-gateway/`:
 
 * `token.json` — OAuth refresh + access token
 * `config.json` — `target_api_url`, `default_model`
-* `mission-control.json` — Claude Codex runtime state (filename kept for backwards-compat; safe to migrate later)
+* `claude-codex.json` — Claude Codex runtime state (legacy `mission-control.json` is auto-migrated on first boot)
 
 ## Persistence, backup & re-login
 

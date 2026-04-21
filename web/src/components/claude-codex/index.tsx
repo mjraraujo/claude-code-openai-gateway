@@ -99,7 +99,7 @@ function writeStorage(key: string, value: string) {
   }
 }
 
-export function MissionControl() {
+export function ClaudeCodex() {
   // Below the lg (1024px) breakpoint we hand off to the single-pane
   // bottom-tab shell so the dashboard is usable on phones and small
   // tablets. The desktop resizable shell only renders at >=lg.

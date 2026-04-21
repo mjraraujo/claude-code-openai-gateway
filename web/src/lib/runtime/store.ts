@@ -87,6 +87,12 @@ export interface Department {
 
 export type TaskColumn = "backlog" | "active" | "review" | "shipped";
 
+export interface SubTask {
+  id: string;
+  title: string;
+  done: boolean;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -95,6 +101,8 @@ export interface Task {
   createdAt: number;
   /** Id of an auto-drive run triggered from this task, if any. */
   runId?: string;
+  /** Optional checklist of sub-items. Empty or omitted = no checklist. */
+  subtasks?: SubTask[];
 }
 
 export type AutoDriveStepKind =
@@ -150,7 +158,10 @@ const CONFIG_DIR = path.join(
   process.env.CODEX_GATEWAY_CONFIG_DIR || os.homedir() || ".",
   ".codex-gateway",
 );
-const STATE_FILE = path.join(CONFIG_DIR, "mission-control.json");
+const STATE_FILE = path.join(CONFIG_DIR, "claude-codex.json");
+/** Legacy on-disk filename from the "Mission Control" era. Migrated
+ * in-place on first load if the new file doesn't exist yet. */
+const LEGACY_STATE_FILE = path.join(CONFIG_DIR, "mission-control.json");
 
 const SEED_TASKS: Task[] = [
   { id: "T-101", title: "Wire OAuth device flow to gateway", column: "shipped", tag: "auth", createdAt: 0 },
@@ -198,7 +209,24 @@ class RuntimeStore extends EventEmitter {
       const parsed = JSON.parse(raw) as Partial<RuntimeState>;
       this.state = mergeWithDefaults(parsed);
     } catch {
-      // First launch — keep defaults.
+      // New state file not found — try the legacy filename from the
+      // "Mission Control" era. If present, rehydrate from it and
+      // rename it to the new name so subsequent boots go the fast
+      // path. Best-effort: a failed rename still works in-memory and
+      // the next `persist()` will write to the new filename.
+      try {
+        const legacyRaw = await fs.readFile(LEGACY_STATE_FILE, "utf8");
+        const parsed = JSON.parse(legacyRaw) as Partial<RuntimeState>;
+        this.state = mergeWithDefaults(parsed);
+        try {
+          await fs.rename(LEGACY_STATE_FILE, STATE_FILE);
+        } catch {
+          // Rename failed (EXDEV, perms, etc.) — leave legacy file
+          // alone; `persist()` will write the new file shortly.
+        }
+      } catch {
+        // Neither file present / readable — keep defaults.
+      }
     }
   }
 
@@ -291,6 +319,7 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
       tag: typeof t.tag === "string" ? t.tag : undefined,
       createdAt: typeof t.createdAt === "number" ? t.createdAt : 0,
       runId: typeof t.runId === "string" ? t.runId : undefined,
+      subtasks: normalizeSubtasks((t as { subtasks?: unknown }).subtasks),
     }));
   }
   return merged;
@@ -298,6 +327,34 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
 
 export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(6).toString("base64url")}`;
+}
+
+/** Max length for a sub-task title, matched by the POST/PATCH tasks route. */
+export const MAX_SUBTASK_TITLE_LENGTH = 200;
+/** Max number of sub-tasks per card. Prevents unbounded growth. */
+export const MAX_SUBTASKS_PER_TASK = 50;
+
+/**
+ * Coerce a deserialized value into a `SubTask[]`. Unknown / malformed
+ * input becomes `undefined` so the property round-trips as "no
+ * checklist" rather than an empty array (keeps JSON small).
+ */
+export function normalizeSubtasks(raw: unknown): SubTask[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: SubTask[] = [];
+  for (const item of raw) {
+    if (out.length >= MAX_SUBTASKS_PER_TASK) break;
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const id = typeof r.id === "string" && r.id ? r.id : null;
+    const title =
+      typeof r.title === "string"
+        ? r.title.trim().slice(0, MAX_SUBTASK_TITLE_LENGTH)
+        : "";
+    if (!id || !title) continue;
+    out.push({ id, title, done: r.done === true });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /**
