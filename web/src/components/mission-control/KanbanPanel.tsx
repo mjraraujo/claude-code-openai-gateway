@@ -34,6 +34,7 @@ export function KanbanPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<TaskColumn | null>(null);
   const addInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -110,6 +111,27 @@ export function KanbanPanel() {
       if (!res.ok) throw new Error(`move failed (${res.status})`);
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const renameCard = async (id: string, title: string): Promise<boolean> => {
+    const trimmed = title.trim().slice(0, 200);
+    if (!trimmed) return false;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/runtime/tasks", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, title: trimmed }),
+      });
+      if (!res.ok) throw new Error(`rename failed (${res.status})`);
+      return true;
+    } catch (err) {
+      setError((err as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -275,8 +297,37 @@ export function KanbanPanel() {
       <div className="flex flex-1 flex-col gap-3 overflow-y-auto pr-1">
         {COLUMNS.map((col) => {
           const items = tasks.filter((c) => c.column === col.id);
+          const isDropTarget = dragOverColumn === col.id;
           return (
-            <section key={col.id} className="flex flex-col gap-2">
+            <section
+              key={col.id}
+              className="flex flex-col gap-2"
+              onDragOver={(e) => {
+                // Required to opt the column into being a drop zone.
+                if (!e.dataTransfer.types.includes("application/x-card-id")) {
+                  return;
+                }
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (dragOverColumn !== col.id) setDragOverColumn(col.id);
+              }}
+              onDragLeave={(e) => {
+                // Only clear when leaving the section itself, not a child.
+                if (e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                  return;
+                }
+                if (dragOverColumn === col.id) setDragOverColumn(null);
+              }}
+              onDrop={(e) => {
+                const id = e.dataTransfer.getData("application/x-card-id");
+                setDragOverColumn(null);
+                if (!id) return;
+                const current = tasks.find((t) => t.id === id);
+                if (!current || current.column === col.id) return;
+                e.preventDefault();
+                void moveCard(id, col.id);
+              }}
+            >
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
                   {col.title}
@@ -285,7 +336,11 @@ export function KanbanPanel() {
                   {items.length}
                 </span>
               </div>
-              <div className="flex flex-col gap-1.5">
+              <div
+                className={`flex flex-col gap-1.5 rounded-md transition ${
+                  isDropTarget ? "bg-zinc-900/60 ring-1 ring-zinc-700" : ""
+                }`}
+              >
                 {items.map((c) => (
                   <TaskCard
                     key={c.id}
@@ -294,13 +349,14 @@ export function KanbanPanel() {
                     runningThisCard={runningTaskId === c.id}
                     busy={busy}
                     onMove={moveCard}
+                    onRename={renameCard}
                     onDelete={deleteCard}
                     onRun={runCard}
                   />
                 ))}
                 {items.length === 0 && (
                   <p className="rounded-md border border-dashed border-zinc-900 px-2.5 py-3 text-center text-[11px] text-zinc-600">
-                    Empty
+                    {isDropTarget ? "Drop here" : "Empty"}
                   </p>
                 )}
               </div>
@@ -318,6 +374,7 @@ interface TaskCardProps {
   runningThisCard: boolean;
   busy: boolean;
   onMove: (id: string, column: TaskColumn) => void;
+  onRename: (id: string, title: string) => Promise<boolean>;
   onDelete: (id: string) => void;
   onRun: (task: Task) => void;
 }
@@ -328,14 +385,63 @@ function TaskCard({
   runningThisCard,
   busy,
   onMove,
+  onRename,
   onDelete,
   onRun,
 }: TaskCardProps) {
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(task.title);
+  const [dragging, setDragging] = useState(false);
+  const editRef = useRef<HTMLInputElement | null>(null);
   const isRunning = task.runId && task.runId === currentRunId;
 
+  // Keep the inline edit buffer in sync with upstream renames /
+  // SSE pushes whenever we're not actively editing.
+  useEffect(() => {
+    if (!editing) setDraft(task.title);
+  }, [task.title, editing]);
+
+  useEffect(() => {
+    if (editing) {
+      editRef.current?.focus();
+      editRef.current?.select();
+    }
+  }, [editing]);
+
+  const commitEdit = async () => {
+    const next = draft.trim();
+    if (!next || next === task.title) {
+      setEditing(false);
+      setDraft(task.title);
+      return;
+    }
+    const ok = await onRename(task.id, next);
+    if (ok) {
+      setEditing(false);
+    } else {
+      // Keep the editor open so the user can fix / retry.
+      setDraft(next);
+    }
+  };
+
   return (
-    <article className="rounded-md border border-zinc-900 bg-zinc-950/60 p-2.5 transition hover:border-zinc-800">
+    <article
+      draggable={!editing}
+      onDragStart={(e) => {
+        if (editing) {
+          e.preventDefault();
+          return;
+        }
+        e.dataTransfer.setData("application/x-card-id", task.id);
+        e.dataTransfer.effectAllowed = "move";
+        setDragging(true);
+      }}
+      onDragEnd={() => setDragging(false)}
+      className={`rounded-md border border-zinc-900 bg-zinc-950/60 p-2.5 transition hover:border-zinc-800 ${
+        dragging ? "opacity-50" : ""
+      } ${editing ? "cursor-text" : "cursor-grab active:cursor-grabbing"}`}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
@@ -351,7 +457,34 @@ function TaskCard({
               </span>
             )}
           </div>
-          <p className="mt-1 text-xs leading-5 text-zinc-200">{task.title}</p>
+          {editing ? (
+            <input
+              ref={editRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value.slice(0, 200))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void commitEdit();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setEditing(false);
+                  setDraft(task.title);
+                }
+              }}
+              onBlur={() => void commitEdit()}
+              disabled={busy}
+              className="mt-1 w-full rounded border border-zinc-700 bg-black px-1.5 py-1 text-xs leading-5 text-zinc-100 focus:border-zinc-500 focus:outline-none"
+            />
+          ) : (
+            <p
+              onDoubleClick={() => setEditing(true)}
+              title="Double-click to edit"
+              className="mt-1 text-xs leading-5 text-zinc-200"
+            >
+              {task.title}
+            </p>
+          )}
         </div>
         <button
           type="button"
@@ -381,6 +514,18 @@ function TaskCard({
               </option>
             ))}
           </select>
+          {/* Edit title inline */}
+          <button
+            type="button"
+            disabled={busy || editing}
+            onClick={() => {
+              setEditing(true);
+              setOpen(false);
+            }}
+            className="rounded border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300 hover:border-zinc-700 disabled:opacity-50"
+          >
+            ✎ edit
+          </button>
           {/* Run with auto-drive */}
           {task.column !== "shipped" && (
             <button

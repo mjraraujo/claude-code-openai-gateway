@@ -154,7 +154,7 @@ const STATE_FILE = path.join(CONFIG_DIR, "mission-control.json");
 
 const SEED_TASKS: Task[] = [
   { id: "T-101", title: "Wire OAuth device flow to gateway", column: "shipped", tag: "auth", createdAt: 0 },
-  { id: "T-102", title: "Mission Control 3-panel shell", column: "shipped", tag: "ui", createdAt: 0 },
+  { id: "T-102", title: "Claude Codex 3-panel shell", column: "shipped", tag: "ui", createdAt: 0 },
   { id: "T-103", title: "Embed Monaco workspace tab", column: "shipped", tag: "editor", createdAt: 0 },
   { id: "T-104", title: "Real PTY for in-browser terminal", column: "shipped", tag: "infra", createdAt: 0 },
   { id: "T-105", title: "Departments + cron matrix", column: "shipped", tag: "ops", createdAt: 0 },
