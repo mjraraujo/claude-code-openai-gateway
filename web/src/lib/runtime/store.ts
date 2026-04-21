@@ -30,6 +30,19 @@ export interface AgentState {
   name: string;
   status: AgentStatus;
   skill: string;
+  /**
+   * Optional grouping for the Agents panel sidebar filter. Free-
+   * form so departments don't have to be pre-declared in
+   * `RuntimeState.departments`. When set, the panel offers a
+   * "filter by department" affordance.
+   */
+  department?: string;
+  /**
+   * Optional per-agent model override. When unset the agent uses
+   * the global `HarnessState.model`. Same id-shape constraints as
+   * the global field; validated by `/api/runtime/agents`.
+   */
+  model?: string;
 }
 
 export interface HarnessState {
@@ -230,7 +243,11 @@ async function writeStateAtomic(state: RuntimeState): Promise<void> {
 
 function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
   const merged = structuredClone(DEFAULT_STATE);
-  if (parsed.agents && Array.isArray(parsed.agents)) merged.agents = parsed.agents;
+  if (parsed.agents && Array.isArray(parsed.agents)) {
+    merged.agents = parsed.agents
+      .map((a) => normalizeAgent(a))
+      .filter((a): a is AgentState => a !== null);
+  }
   if (parsed.harness) {
     merged.harness = { ...merged.harness, ...parsed.harness };
     if (typeof parsed.harness.model !== "string" || !parsed.harness.model.trim()) {
@@ -271,4 +288,46 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
 
 export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(6).toString("base64url")}`;
+}
+
+/**
+ * Coerce an arbitrary deserialized value into an `AgentState`.
+ * Returns null if the input lacks the required `id` / `name` fields
+ * so callers can drop bad records instead of corrupting the store.
+ *
+ * Optional fields (`department`, `model`) are only kept when they
+ * pass simple validation; everything else falls back to defaults.
+ */
+function normalizeAgent(raw: unknown): AgentState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  const id = typeof a.id === "string" && a.id ? a.id : null;
+  const name = typeof a.name === "string" && a.name ? a.name : null;
+  if (!id || !name) return null;
+  const status: AgentStatus =
+    a.status === "active" || a.status === "idle" || a.status === "blocked"
+      ? a.status
+      : "idle";
+  const skill = typeof a.skill === "string" && a.skill ? a.skill : "—";
+  const dept = typeof a.department === "string" ? a.department.trim() : "";
+  const model = typeof a.model === "string" ? a.model.trim() : "";
+  return {
+    id,
+    name,
+    status,
+    skill,
+    department: dept || undefined,
+    model: isValidModelId(model) ? model : undefined,
+  };
+}
+
+/**
+ * Same regex/length constraints as `/api/runtime/harness` applies
+ * to `harness.model`. Centralised here so per-agent overrides can't
+ * diverge from the global validation surface.
+ */
+export function isValidModelId(value: string): boolean {
+  if (!value) return false;
+  if (value.length > 64) return false;
+  return /^[\w.\-:/]+$/.test(value);
 }

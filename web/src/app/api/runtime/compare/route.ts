@@ -27,6 +27,7 @@ import { NextResponse } from "next/server";
 import { isSessionAuthenticated } from "@/lib/auth/session";
 import { getOrCreateSessionApiKey, getValidToken } from "@/lib/auth/storage";
 import { consumeAnthropicStream } from "@/lib/gateway/anthropicStream";
+import { isValidModelId } from "@/lib/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,7 +39,6 @@ const GATEWAY_URL =
 const MAX_LANES = 4;
 const MAX_PROMPT_CHARS = 4000;
 const REQUEST_TIMEOUT_MS = 60_000;
-const MODEL_RE = /^[\w.\-:/]{1,64}$/;
 
 interface LaneRequest {
   id: string;
@@ -144,7 +144,7 @@ function parseLanes(raw: unknown): LaneRequest[] {
     if (!item || typeof item !== "object") continue;
     const r = item as Record<string, unknown>;
     const model = typeof r.model === "string" ? r.model.trim() : "";
-    if (!model || !MODEL_RE.test(model)) continue;
+    if (!isValidModelId(model)) continue;
     const rawId = typeof r.id === "string" ? r.id.trim() : "";
     let id = rawId && /^[\w\-]{1,32}$/.test(rawId) ? rawId : model;
     let i = 2;

@@ -2,6 +2,11 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 
 import { isSessionAuthenticated } from "@/lib/auth/session";
+import {
+  DEFAULT_DENY_PATTERNS,
+  evaluate,
+  policyFromEnv,
+} from "@/lib/exec/policy";
 import { WORKSPACE_ROOT } from "@/lib/fs/workspace";
 
 /**
@@ -52,26 +57,22 @@ export const dynamic = "force-dynamic";
  *
  * Future: a `node-pty`-backed `/api/pty` WebSocket can be added
  * alongside this route when we ship the desktop builds.
+ *
+ * Safety:
+ *   - Authentication via the session cookie is the actual access
+ *     control.
+ *   - On top of that, every command is run through the configurable
+ *     `ExecPolicy` (see `lib/exec/policy.ts`): a default deny list
+ *     blocks the most catastrophic shell footguns, an optional
+ *     allow list restricts the route to a known whitelist, and a
+ *     per-command timeout caps runtime. Operators can extend the
+ *     policy via `MISSION_CONTROL_EXEC_DENY` /
+ *     `MISSION_CONTROL_EXEC_ALLOW` / `MISSION_CONTROL_EXEC_TIMEOUT_MS`.
+ *   - The policy is *not* a regex sandbox — `bash -lc` is fully
+ *     expressive and trivially obfuscatable. The allow-list is the
+ *     correct tool when running unattended (e.g. chat-driven exec).
  */
 
-/**
- * Defensive blocklist for obviously catastrophic commands. This is
- * NOT a security boundary — `bash -lc` is fully expressive and
- * trivially bypassed (e.g. `eval "$(echo cm0gLXJmIC8K | base64 -d)"`).
- * Authentication via the session cookie is the actual access control;
- * this list is only here to catch fat-finger accidents.
- */
-const BLOCKED_COMMAND_PATTERNS = [
-  "rm -rf /",
-  "sudo ",
-  ":(){",
-  "mkfs",
-  "shutdown",
-  "reboot",
-  "dd if=",
-];
-
-const MAX_DURATION_MS = 5 * 60 * 1000;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024; // 4 MB cap per run
 
 interface ExecBody {
@@ -104,17 +105,32 @@ export async function POST(req: Request): Promise<Response> {
       headers: { "Content-Type": "application/json" },
     });
   }
-  for (const bad of BLOCKED_COMMAND_PATTERNS) {
-    if (command.includes(bad)) {
-      return new Response(JSON.stringify({ error: "command_blocked" }), {
+  // Resolve the policy from env vars on every request so operators
+  // can tune it without restarting the Next.js process. The pure
+  // helper handles validation and clamping; we just consume the
+  // verdict.
+  const policy = policyFromEnv();
+  const verdict = evaluate(command, policy);
+  if (!verdict.allowed) {
+    return new Response(
+      JSON.stringify({
+        error: "command_blocked",
+        reason: verdict.reason,
+        // Echo the matched deny pattern so the UI can surface "why";
+        // omitted for allow-list misses since there's no single
+        // pattern to point at.
+        matchedPattern: verdict.matchedPattern,
+      }),
+      {
         status: 400,
         headers: { "Content-Type": "application/json" },
-      });
-    }
+      },
+    );
   }
 
   const cwd = WORKSPACE_ROOT;
   const abortSignal = req.signal;
+  const timeoutMs = policy.timeoutMs;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -140,7 +156,7 @@ export async function POST(req: Request): Promise<Response> {
         }
       };
 
-      send("start", { command, cwd });
+      send("start", { command, cwd, timeoutMs });
 
       const shell = resolveShell();
       if (!shell) {
@@ -161,9 +177,9 @@ export async function POST(req: Request): Promise<Response> {
       });
 
       const timeout = setTimeout(() => {
-        send("info", { message: "timeout — killing process" });
+        send("info", { message: `timeout (${timeoutMs}ms) — killing process` });
         child.kill("SIGKILL");
-      }, MAX_DURATION_MS);
+      }, timeoutMs);
 
       const onAbort = () => {
         send("info", { message: "client disconnected — killing process" });
@@ -221,4 +237,33 @@ export async function POST(req: Request): Promise<Response> {
       "X-Accel-Buffering": "no",
     },
   });
+}
+
+/**
+ * GET /api/exec — return the active policy so the settings UI can
+ * render it without poking at private internals. Cheap, JSON-only,
+ * and read-only.
+ */
+export async function GET(): Promise<Response> {
+  if (!(await isSessionAuthenticated())) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const policy = policyFromEnv();
+  return new Response(
+    JSON.stringify({
+      policy: {
+        deny: policy.deny,
+        allow: policy.allow,
+        timeoutMs: policy.timeoutMs,
+        defaultDeny: DEFAULT_DENY_PATTERNS,
+      },
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }

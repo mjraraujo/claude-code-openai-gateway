@@ -26,9 +26,28 @@ RUN npm run build
 # ─── Stage 2: runtime ───────────────────────────────────────────────
 FROM node:20-alpine AS runtime
 
-# `wget` is used by HEALTHCHECK; busybox wget is already in alpine, so
-# we only need a tiny shell.
-RUN apk add --no-cache tini
+# Toolchain baked into the image so the Mission Control terminal +
+# chat-driven exec route have a useful surface out of the box. We
+# deliberately do NOT enable `apk` / `apt` at runtime — the chat
+# would need root, which is a security and image-size problem; this
+# list is the entire shell toolchain we support, and operators can
+# extend the image if they need more.
+#
+#   tini       — PID 1 init, forwards signals to children.
+#   bash       — exec route prefers `bash -lc` over `/bin/sh -c`.
+#   git        — `git status` / `git log` / etc. from the terminal.
+#   curl       — used by the gateway and arbitrary shell commands.
+#   python3    — for quick inline data wrangling.
+#   build-base — alpine's gcc/make/etc.; alpine equivalent of
+#                Debian's `build-essential`. Lets `npm install`
+#                build native modules if a user requests it.
+RUN apk add --no-cache \
+        tini \
+        bash \
+        git \
+        curl \
+        python3 \
+        build-base
 
 WORKDIR /app
 

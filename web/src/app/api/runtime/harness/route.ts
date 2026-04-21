@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { isSessionAuthenticated } from "@/lib/auth/session";
-import { getStore, type HarnessState } from "@/lib/runtime";
+import { getStore, isValidModelId, type HarnessState } from "@/lib/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,8 +34,9 @@ export async function PATCH(req: Request): Promise<Response> {
     }
     if (typeof body.model === "string") {
       const trimmed = body.model.trim();
-      // Keep the value pragmatic: short, single-line, no surprises.
-      if (trimmed && trimmed.length <= 64 && /^[\w.\-:/]+$/.test(trimmed)) {
+      // Same id-shape constraint shared with `/api/runtime/agents`
+      // (per-agent override) and `/api/runtime/chat` (request body).
+      if (isValidModelId(trimmed)) {
         draft.harness.model = trimmed;
       }
     }
