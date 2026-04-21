@@ -217,6 +217,52 @@ export interface AutoDriveRun {
   sdlc?: SdlcState;
 }
 
+/**
+ * Snapshot of the most recent Three Amigos run, persisted on the
+ * runtime so the dashboard can rehydrate findings after a refresh
+ * without re-running the whole pass. Bounded by `normalizeAmigosReport`
+ * to keep `claude-codex.json` small.
+ *
+ * Mirrors the shape produced by `runAmigos()` in `./amigos.ts` —
+ * we don't import the type here to avoid a circular dep, since
+ * `amigos.ts` imports `DEFAULT_MODEL` from this module.
+ */
+export interface PersistedAmigoFinding {
+  persona: "business" | "dev" | "qa";
+  severity: "blocker" | "concern" | "info";
+  message: string;
+}
+export interface PersistedAmigoResult {
+  persona: "business" | "dev" | "qa";
+  ok: boolean;
+  summary: string;
+  findings: PersistedAmigoFinding[];
+  error?: string;
+}
+export interface PersistedScenarioReport {
+  featurePath: string;
+  scenarioId: string;
+  scenarioName: string;
+  verdict: "pass" | "concerns" | "fail";
+  findings: PersistedAmigoFinding[];
+  amigos: PersistedAmigoResult[];
+}
+export interface PersistedAmigosReport {
+  startedAt: number;
+  endedAt?: number;
+  scope:
+    | { type: "all" }
+    | { type: "feature"; path: string }
+    | { type: "scenario"; path: string; scenarioId: string };
+  total: number;
+  scanned: number;
+  pass: number;
+  concerns: number;
+  fail: number;
+  scenarios: PersistedScenarioReport[];
+  error?: string;
+}
+
 export interface RuntimeState {
   agents: AgentState[];
   harness: HarnessState;
@@ -228,6 +274,8 @@ export interface RuntimeState {
     /** Last 10 finished runs, newest first. */
     history: AutoDriveRun[];
   };
+  /** Last Three Amigos report, if any. */
+  amigosReport?: PersistedAmigosReport;
 }
 
 const CONFIG_DIR = path.join(
@@ -408,6 +456,9 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
       subtasks: normalizeSubtasks((t as { subtasks?: unknown }).subtasks),
     }));
   }
+  const reportRaw = (parsed as { amigosReport?: unknown }).amigosReport;
+  const report = normalizeAmigosReport(reportRaw);
+  if (report) merged.amigosReport = report;
   return merged;
 }
 
@@ -419,6 +470,149 @@ export function newId(prefix: string): string {
 export const MAX_SUBTASK_TITLE_LENGTH = 200;
 /** Max number of sub-tasks per card. Prevents unbounded growth. */
 export const MAX_SUBTASKS_PER_TASK = 50;
+
+/* ─── Three Amigos persisted-report bounds ─────────────────────────── */
+/** Max scenarios stored on disk. Older entries beyond this are dropped. */
+export const MAX_AMIGOS_SCENARIOS_PERSISTED = 200;
+/** Max findings per scenario kept on disk. */
+export const MAX_AMIGOS_FINDINGS_PER_SCENARIO = 30;
+/** Max chars per finding message kept on disk. */
+export const MAX_AMIGOS_FINDING_CHARS = 600;
+/** Max chars for a free-form summary string kept on disk. */
+export const MAX_AMIGOS_SUMMARY_CHARS = 600;
+
+const AMIGO_PERSONA_SET = new Set(["business", "dev", "qa"]);
+const AMIGO_SEVERITY_SET = new Set(["blocker", "concern", "info"]);
+const AMIGO_VERDICT_SET = new Set(["pass", "concerns", "fail"]);
+
+/**
+ * Coerce a deserialized `amigosReport` value into a bounded shape.
+ * Unknown / malformed input becomes `undefined` so the round-trip
+ * stays honest (no half-built reports). Caps array sizes and
+ * truncates long strings so the on-disk JSON stays small even after
+ * many runs.
+ */
+export function normalizeAmigosReport(
+  raw: unknown,
+): PersistedAmigosReport | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const startedAt = typeof r.startedAt === "number" ? r.startedAt : null;
+  if (startedAt === null) return undefined;
+  const scope = normalizeAmigosScope(r.scope);
+  if (!scope) return undefined;
+  const scenariosRaw = Array.isArray(r.scenarios) ? r.scenarios : [];
+  const scenarios: PersistedScenarioReport[] = [];
+  for (const s of scenariosRaw) {
+    if (scenarios.length >= MAX_AMIGOS_SCENARIOS_PERSISTED) break;
+    const norm = normalizeScenarioReport(s);
+    if (norm) scenarios.push(norm);
+  }
+  return {
+    startedAt,
+    endedAt: typeof r.endedAt === "number" ? r.endedAt : undefined,
+    scope,
+    total: clampInt32(r.total),
+    scanned: clampInt32(r.scanned),
+    pass: clampInt32(r.pass),
+    concerns: clampInt32(r.concerns),
+    fail: clampInt32(r.fail),
+    scenarios,
+    error: typeof r.error === "string" ? r.error.slice(0, 400) : undefined,
+  };
+}
+
+function normalizeAmigosScope(
+  raw: unknown,
+): PersistedAmigosReport["scope"] | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  if (s.type === "all") return { type: "all" };
+  if (s.type === "feature" && typeof s.path === "string") {
+    return { type: "feature", path: s.path.slice(0, 1024) };
+  }
+  if (
+    s.type === "scenario" &&
+    typeof s.path === "string" &&
+    typeof s.scenarioId === "string"
+  ) {
+    return {
+      type: "scenario",
+      path: s.path.slice(0, 1024),
+      scenarioId: s.scenarioId.slice(0, 200),
+    };
+  }
+  return null;
+}
+
+function normalizeScenarioReport(raw: unknown): PersistedScenarioReport | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const featurePath = typeof r.featurePath === "string" ? r.featurePath.slice(0, 1024) : "";
+  const scenarioId = typeof r.scenarioId === "string" ? r.scenarioId.slice(0, 200) : "";
+  const scenarioName = typeof r.scenarioName === "string" ? r.scenarioName.slice(0, 400) : "";
+  if (!featurePath || !scenarioId) return null;
+  const verdict = AMIGO_VERDICT_SET.has(r.verdict as string)
+    ? (r.verdict as PersistedScenarioReport["verdict"])
+    : "concerns";
+  const findings: PersistedAmigoFinding[] = [];
+  if (Array.isArray(r.findings)) {
+    for (const f of r.findings) {
+      if (findings.length >= MAX_AMIGOS_FINDINGS_PER_SCENARIO) break;
+      const norm = normalizeAmigoFinding(f);
+      if (norm) findings.push(norm);
+    }
+  }
+  const amigos: PersistedAmigoResult[] = [];
+  if (Array.isArray(r.amigos)) {
+    for (const a of r.amigos) {
+      if (amigos.length >= 3) break;
+      const norm = normalizeAmigoResult(a);
+      if (norm) amigos.push(norm);
+    }
+  }
+  return { featurePath, scenarioId, scenarioName, verdict, findings, amigos };
+}
+
+function normalizeAmigoFinding(raw: unknown): PersistedAmigoFinding | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (!AMIGO_PERSONA_SET.has(r.persona as string)) return null;
+  if (!AMIGO_SEVERITY_SET.has(r.severity as string)) return null;
+  const message = typeof r.message === "string" ? r.message.trim() : "";
+  if (!message) return null;
+  return {
+    persona: r.persona as PersistedAmigoFinding["persona"],
+    severity: r.severity as PersistedAmigoFinding["severity"],
+    message: message.slice(0, MAX_AMIGOS_FINDING_CHARS),
+  };
+}
+
+function normalizeAmigoResult(raw: unknown): PersistedAmigoResult | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (!AMIGO_PERSONA_SET.has(r.persona as string)) return null;
+  const findings: PersistedAmigoFinding[] = [];
+  if (Array.isArray(r.findings)) {
+    for (const f of r.findings) {
+      if (findings.length >= MAX_AMIGOS_FINDINGS_PER_SCENARIO) break;
+      const norm = normalizeAmigoFinding(f);
+      if (norm) findings.push(norm);
+    }
+  }
+  return {
+    persona: r.persona as PersistedAmigoResult["persona"],
+    ok: r.ok === true,
+    summary: typeof r.summary === "string" ? r.summary.slice(0, MAX_AMIGOS_SUMMARY_CHARS) : "",
+    findings,
+    error: typeof r.error === "string" ? r.error.slice(0, 400) : undefined,
+  };
+}
+
+function clampInt32(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.min(0x7fffffff, Math.floor(raw)));
+}
 
 /**
  * Coerce a deserialized value into a `SubTask[]`. Unknown / malformed
