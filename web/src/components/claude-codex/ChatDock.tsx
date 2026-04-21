@@ -3,7 +3,7 @@
 /**
  * ChatDock — streaming chat with the local gateway.
  *
- * Lives in the right column of Mission Control as one of two tabs
+ * Lives in the right column of Claude Codex as one of two tabs
  * (the other being the existing Agents panel). Posts the conversation
  * to `POST /api/runtime/chat` which forwards it to `bin/gateway.js`
  * (Anthropic Messages-shaped, always streams SSE) and pipes the

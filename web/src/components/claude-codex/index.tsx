@@ -14,7 +14,7 @@ import { TerminalView } from "./TerminalView";
 import { WorkspaceCenter } from "./WorkspaceCenter";
 
 /**
- * Mission Control desktop shell.
+ * Claude Codex desktop shell.
  *
  * Layout (desktop, >= lg):
  *   [Kanban rail | Workspace top                 | Right rail]

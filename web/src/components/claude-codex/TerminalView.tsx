@@ -208,7 +208,7 @@ export function TerminalView() {
     <div className="flex h-full flex-col bg-black font-mono text-[12px] leading-5 text-zinc-200">
       <div className="flex items-center justify-between border-b border-zinc-900 px-4 py-2">
         <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-          mission control · gateway shell
+          claude codex · gateway shell
         </span>
         <span className="flex items-center gap-2 text-[10px]">
           {running ? (

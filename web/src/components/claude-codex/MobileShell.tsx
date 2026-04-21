@@ -10,7 +10,7 @@ import { WorkspaceCenter } from "./WorkspaceCenter";
 /**
  * Mobile-first single-pane shell.
  *
- * Renders one of the existing Mission Control panels at a time, picked
+ * Renders one of the existing Claude Codex panels at a time, picked
  * via a bottom tab bar. The panels themselves are reused unchanged —
  * they all subscribe to the same `/api/runtime/state` SSE stream, so
  * switching tabs does not re-fetch state and does not interrupt any
@@ -80,7 +80,7 @@ export function MobileShell() {
         )}
       </main>
       <nav
-        aria-label="Mission Control sections"
+        aria-label="Claude Codex sections"
         className="flex shrink-0 items-stretch border-t border-zinc-900 bg-black pb-[env(safe-area-inset-bottom)]"
       >
         {TABS.map((t) => {

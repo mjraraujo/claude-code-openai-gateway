@@ -20,7 +20,7 @@
  *     allow-forms allow-popups`) so a misbehaving previewed page
  *     can't, say, navigate the parent window.
  *   - `referrerpolicy="no-referrer"` reduces accidental leakage of
- *     the Mission Control URL to the previewed origin.
+ *     the Claude Codex URL to the previewed origin.
  *   - Only `http(s):` URLs are accepted; `javascript:` / `data:` /
  *     `file:` schemes are rejected at submit time so the address bar
  *     can't be used as an XSS surface.
@@ -184,7 +184,7 @@ export function BrowserView() {
             // Permissive enough for typical dev previews but still
             // sandboxed away from `allow-top-navigation` / `allow-
             // modals` which would let a hostile preview hijack the
-            // Mission Control tab.
+            // Claude Codex tab.
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             referrerPolicy="no-referrer"
             title="Internal browser preview"
