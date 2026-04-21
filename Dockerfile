@@ -134,7 +134,8 @@ COPY --from=web-builder /app/web/node_modules/node-addon-api ./web/node_modules/
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p /home/claude/.codex-gateway \
-    && chown -R claude:claude /app /home/claude
+    && mkdir -p /workspace \
+    && chown -R claude:claude /app /home/claude /workspace
 
 USER claude
 ENV HOME=/home/claude
@@ -143,7 +144,9 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
     CLAUDE_CODEX_GATEWAY_URL=http://127.0.0.1:18923/v1/messages \
-    MISSION_CONTROL_GATEWAY_URL=http://127.0.0.1:18923/v1/messages
+    MISSION_CONTROL_GATEWAY_URL=http://127.0.0.1:18923/v1/messages \
+    CLAUDE_CODEX_WORKSPACE=/workspace \
+    CLAUDE_CODEX_WORKSPACES_DIR=/workspace
 
 EXPOSE 3000 18923
 

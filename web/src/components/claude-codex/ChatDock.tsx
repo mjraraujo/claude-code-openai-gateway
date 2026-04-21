@@ -49,13 +49,21 @@ export function ChatDock() {
       id: 0,
       role: "system",
       content:
-        "Chat streams via the local gateway. Model is shared with the Agents panel — change it there. Conversation is not persisted.",
+      "Chat streams via the local gateway. Toggle 'tools' to let the assistant create files, run commands, and inspect the workspace via the same harness as auto-drive. Conversation is not persisted.",
     },
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [model, setModel] = useState<string>(DEFAULT_MODEL_ID);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
+  /**
+   * When true, chat goes through the tool-calling agent loop
+   * (`/api/runtime/chat/agent`) — same harness as auto-drive, so the
+   * assistant can read/write files and exec commands. When false,
+   * falls back to the original streaming pass-through to the
+   * gateway. Default ON now that the tool harness is wired up.
+   */
+  const [toolsEnabled, setToolsEnabled] = useState(true);
 
   const turnId = useRef(1);
   const abortRef = useRef<AbortController | null>(null);
@@ -151,6 +159,59 @@ export function ChatDock() {
       const system = buildSystemPrompt(workspaceRoot);
 
       try {
+        // Agent mode: post the latest turn (and thus the goal) to the
+        // tool-calling loop. The agent owns the conversation context
+        // for its own iterations; we only stream the resulting events
+        // back into the assistant turn for the operator to read.
+        if (toolsEnabled) {
+          const res = await fetch("/api/runtime/chat/agent", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ goal: trimmed, model }),
+            signal: ctrl.signal,
+          });
+          if (!res.ok || !res.body) {
+            const errText = await res.text().catch(() => "");
+            patch(assistantId, (t) => ({
+              ...t,
+              content: errText || `request failed (${res.status})`,
+              streaming: false,
+              error: true,
+            }));
+            return;
+          }
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let acc = "";
+          let sawError = false;
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buffer.indexOf("\n\n")) !== -1) {
+              const block = buffer.slice(0, idx);
+              buffer = buffer.slice(idx + 2);
+              const evt = parseAgentSseFrame(block);
+              if (!evt) continue;
+              const rendered = renderAgentEvent(evt);
+              if (evt.type === "error") sawError = true;
+              if (rendered) {
+                acc = acc ? `${acc}\n${rendered}` : rendered;
+                const snapshot = acc;
+                patch(assistantId, (t) => ({ ...t, content: snapshot }));
+              }
+            }
+          }
+          patch(assistantId, (t) => ({
+            ...t,
+            streaming: false,
+            error: sawError || t.error,
+          }));
+          return;
+        }
+
         const res = await fetch("/api/runtime/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -215,7 +276,7 @@ export function ChatDock() {
         setSending(false);
       }
     },
-    [append, model, patch, sending, turns, workspaceRoot],
+    [append, model, patch, sending, toolsEnabled, turns, workspaceRoot],
   );
 
   const onKeyDown = useCallback(
@@ -259,6 +320,19 @@ export function ChatDock() {
           </div>
         </div>
         <div className="flex items-center gap-2 text-[10px]">
+          <label
+            className="flex cursor-pointer items-center gap-1 rounded border border-zinc-800 px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-900"
+            title="When ON, the assistant can read/write files and exec commands via the same tool harness as auto-drive."
+          >
+            <input
+              type="checkbox"
+              checked={toolsEnabled}
+              onChange={(e) => setToolsEnabled(e.target.checked)}
+              disabled={sending}
+              className="h-3 w-3 cursor-pointer accent-emerald-500"
+            />
+            tools
+          </label>
           {sending ? (
             <button
               type="button"
@@ -323,8 +397,73 @@ function buildSystemPrompt(workspaceRoot: string | null): string {
   return [
     "You are an assistant embedded in the Claude Codex dashboard for the claude-code-openai-gateway repository.",
     `Current workspace root: ${root}.`,
-    "Be concise. Prefer code blocks for code. If asked to modify files or run commands, describe the change — execution is not yet wired through this surface.",
+    "Be concise. Prefer code blocks for code. With 'tools' enabled, you can create/read files and exec commands; without tools, describe the change instead.",
   ].join(" ");
+}
+
+/* ─── Agent SSE parsing ─────────────────────────────────────────────── */
+
+/**
+ * Parse a single SSE block emitted by `/api/runtime/chat/agent`. The
+ * route's frames are shaped `event: <type>\ndata: <json>` where
+ * `<json>` is the full `ChatAgentEvent` discriminated union.
+ */
+type AgentEvent =
+  | { type: "thought"; text: string }
+  | { type: "tool_call"; tool: string; summary: string }
+  | { type: "tool_result"; tool: string; ok: boolean; preview: string; code?: string; hint?: string }
+  | { type: "message"; content: string }
+  | { type: "done"; summary: string; steps: number }
+  | { type: "error"; message: string };
+
+function parseAgentSseFrame(block: string): AgentEvent | null {
+  let dataPayload = "";
+  let evt = "";
+  for (const rawLine of block.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (line.startsWith("event:")) {
+      evt = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      const piece = line.slice(5).replace(/^ /, "");
+      dataPayload = dataPayload ? `${dataPayload}\n${piece}` : piece;
+    }
+  }
+  if (!dataPayload) return null;
+  try {
+    const parsed = JSON.parse(dataPayload) as AgentEvent;
+    // Allow either `event:` line or the `type` field — they should
+    // agree but the data-side is authoritative.
+    if (parsed && typeof parsed === "object" && parsed.type) return parsed;
+    if (evt) return { type: evt as AgentEvent["type"] } as AgentEvent;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Convert an agent event into the human-readable line we append to
+ * the assistant turn. Returns null for events we don't surface
+ * directly (currently none — every type renders something).
+ */
+function renderAgentEvent(ev: AgentEvent): string | null {
+  switch (ev.type) {
+    case "thought":
+      return `· ${ev.text}`;
+    case "tool_call":
+      return `→ ${ev.tool}: ${ev.summary}`;
+    case "tool_result": {
+      const head = ev.ok ? `✓ ${ev.tool}` : `✗ ${ev.tool}${ev.code ? ` [${ev.code}]` : ""}`;
+      const body = ev.preview ? `\n  ${ev.preview.split("\n").join("\n  ")}` : "";
+      return `${head}${body}`;
+    }
+    case "message":
+      return ev.content;
+    case "done":
+      return `— done (${ev.steps} step${ev.steps === 1 ? "" : "s"})`;
+    case "error":
+      return `error: ${ev.message}`;
+  }
 }
 
 /**
