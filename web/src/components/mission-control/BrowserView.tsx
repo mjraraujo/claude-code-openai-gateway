@@ -31,15 +31,29 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 const STORAGE_KEY = "missionControl.browser.url.v1";
 const DEFAULT_URL = "http://localhost:3000";
 
-/** Reject obviously dangerous schemes — only allow http(s). */
-function isSafeUrl(value: string): boolean {
-  if (!value) return false;
+/**
+ * Re-validate `value` and return a *re-serialised* URL string when
+ * it parses as `http(s)`. Returning the URL constructor's
+ * `.toString()` (rather than the raw input) is what makes CodeQL's
+ * `js/xss-through-dom` tracker treat this as a sanitizer — the
+ * output is guaranteed to come from `URL` parsing, so it can't
+ * smuggle a `javascript:` prefix back through the iframe `src` /
+ * anchor `href` sinks.
+ */
+function safeUrl(value: string): string {
+  if (!value) return "";
   try {
     const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    return url.toString();
   } catch {
-    return false;
+    return "";
   }
+}
+
+/** Reject obviously dangerous schemes — only allow http(s). */
+function isSafeUrl(value: string): boolean {
+  return safeUrl(value) !== "";
 }
 
 export function BrowserView() {
@@ -90,16 +104,14 @@ export function BrowserView() {
     setReloadKey((k) => k + 1);
   }, [committed]);
 
-  // Re-validate at render time so that any future code path that
-  // sets `committed` cannot accidentally feed a `javascript:` /
-  // `data:` / `file:` URL to the iframe `src` or anchor `href`.
-  // CodeQL's js/xss-through-dom rule needs to see the validation at
-  // the sink site to clear the warning, and defence-in-depth is
-  // cheap here (`isSafeUrl` is a one-liner).
-  const safeCommitted = useMemo(
-    () => (isSafeUrl(committed) ? committed : ""),
-    [committed],
-  );
+  // Re-validate AND re-serialise via the URL constructor at render
+  // time so that any future code path that sets `committed` cannot
+  // accidentally feed a `javascript:` / `data:` / `file:` URL to
+  // the iframe `src` or anchor `href`. The reserialisation is what
+  // satisfies CodeQL's `js/xss-through-dom` tracker — the output is
+  // guaranteed to be the URL constructor's normalised form, which
+  // can't smuggle a hostile scheme.
+  const safeCommitted = useMemo(() => safeUrl(committed), [committed]);
 
   // Memoised so the iframe only swaps when the URL or reloadKey
   // actually change — important so typing in the URL bar doesn't

@@ -30,7 +30,7 @@ import {
 } from "react";
 
 import type { RuntimeState } from "@/lib/runtime";
-import { DEFAULT_MODEL_ID as DEFAULT_MODEL } from "@/lib/runtime/models";
+import { DEFAULT_MODEL_ID } from "@/lib/runtime/models";
 
 interface ChatTurn {
   id: number;
@@ -54,7 +54,7 @@ export function ChatDock() {
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [model, setModel] = useState<string>(DEFAULT_MODEL);
+  const [model, setModel] = useState<string>(DEFAULT_MODEL_ID);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
 
   const turnId = useRef(1);
