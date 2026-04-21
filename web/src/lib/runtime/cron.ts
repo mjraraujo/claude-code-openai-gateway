@@ -15,7 +15,14 @@
  * schedule string is harmless.
  */
 
-import { execCommand, readFile, writeFile } from "./tools";
+import {
+  execCommand,
+  readFile,
+  runCucumber,
+  runDeploy,
+  writeFeatureFile,
+  writeFile,
+} from "./tools";
 import { plan } from "./planner";
 import {
   AutoDriveStep,
@@ -116,6 +123,15 @@ async function runJob(dept: Department, job: CronJob): Promise<void> {
           break;
         case "exec":
           result = await execCommand(p.action.command);
+          break;
+        case "feature_file":
+          result = await writeFeatureFile(p.action.path, p.action.content);
+          break;
+        case "cucumber":
+          result = await runCucumber(p.action.path);
+          break;
+        case "deploy":
+          result = await runDeploy(p.action.environment);
           break;
       }
       steps.push({

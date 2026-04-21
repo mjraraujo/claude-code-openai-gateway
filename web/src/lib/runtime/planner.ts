@@ -27,6 +27,9 @@ export type PlanAction =
   | { tool: "read_file"; path: string }
   | { tool: "write_file"; path: string; content: string }
   | { tool: "exec"; command: string }
+  | { tool: "feature_file"; path: string; content: string }
+  | { tool: "cucumber"; path?: string }
+  | { tool: "deploy"; environment?: string }
   | { tool: "done"; summary: string };
 
 export interface Plan {
@@ -77,19 +80,25 @@ const BASE_SYSTEM_PROMPT = `You are the Claude Codex auto-drive planner. \
 Given a goal and a transcript of previous steps, decide the SINGLE next \
 tool call. Respond with strict JSON only, no prose, matching this shape:
 
-{"thought": string, "action": {"tool": "read_file"|"write_file"|"exec"|"done", ...args}}
+{"thought": string, "action": {"tool": "read_file"|"write_file"|"exec"|"feature_file"|"cucumber"|"deploy"|"done", ...args}}
 
 Tool args:
 - read_file: {"path": "relative/path"}
 - write_file: {"path": "relative/path", "content": "full new file contents"}
 - exec: {"command": "bash command line"}
+- feature_file: {"path": "features/foo.feature", "content": "Gherkin feature text"}
+- cucumber: {"path": "features"} — runs npx cucumber-js. Path is optional.
+- deploy: {"environment": "staging"} — runs $DEPLOY_CMD (or 'fly deploy' by default). Environment optional.
 - done: {"summary": "what was accomplished"}
 
 Rules:
 - Choose "done" as soon as the goal is satisfied or appears infeasible.
 - Paths are relative to the gateway repo root. Never use absolute paths.
 - Keep commands fast (<30s). Output is truncated past 64 KB.
-- Prefer reading before writing. Prefer small, focused changes.`;
+- Prefer reading before writing. Prefer small, focused changes.
+- The feature_file / cucumber / deploy tools are intended for the
+  endless multi-agent SDLC loop; in bounded runs prefer write_file +
+  exec.`;
 
 /**
  * Per-persona system-prompt fragment. Pure helper, exported for tests
@@ -244,6 +253,37 @@ function parsePlan(raw: string): Plan {
       return {
         thought,
         action: { tool, command: String(action.command ?? "") },
+      };
+    case "feature_file":
+      return {
+        thought,
+        action: {
+          tool,
+          path: String(action.path ?? ""),
+          content: String(action.content ?? ""),
+        },
+      };
+    case "cucumber":
+      return {
+        thought,
+        action: {
+          tool,
+          path:
+            typeof action.path === "string" && action.path.trim()
+              ? action.path
+              : undefined,
+        },
+      };
+    case "deploy":
+      return {
+        thought,
+        action: {
+          tool,
+          environment:
+            typeof action.environment === "string" && action.environment.trim()
+              ? action.environment
+              : undefined,
+        },
       };
     case "done":
       return {

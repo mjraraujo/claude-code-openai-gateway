@@ -11,13 +11,16 @@ startCronOnce();
 
 export {
   getStore,
+  isValidDriveMode,
   isValidModelId,
   isValidPersona,
   newId,
   normalizeSubtasks,
   personaAgentId,
+  INITIAL_SDLC_STATE,
   MAX_SUBTASK_TITLE_LENGTH,
   MAX_SUBTASKS_PER_TASK,
+  VALID_DRIVE_MODES,
   VALID_PERSONAS,
 } from "./store";
 export type {
@@ -28,9 +31,11 @@ export type {
   AutoDriveStatus,
   CronJob,
   Department,
+  DriveMode,
   HarnessState,
   RufloPersona,
   RuntimeState,
+  SdlcState,
   SubTask,
   Task,
   TaskColumn,

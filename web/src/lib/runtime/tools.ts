@@ -13,6 +13,7 @@
 
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
+import path from "node:path";
 
 import {
   assertInsideWorkspace,
@@ -164,4 +165,90 @@ export async function execCommand(command: string): Promise<ToolResult> {
       });
     });
   });
+}
+
+/**
+ * Write a Gherkin .feature file to disk for the BDD stage of the
+ * endless drive. Distinct from `writeFile` because it auto-creates
+ * the file (regular `writeFile` refuses to create new files for
+ * safety) and forces the path under `features/`.
+ *
+ * Path safety: still goes through `safeJoin` so a malicious planner
+ * can't break out of the workspace via `../`.
+ */
+export async function writeFeatureFile(
+  relPath: string,
+  content: string,
+): Promise<ToolResult> {
+  if (typeof relPath !== "string" || relPath === "") {
+    return { ok: false, error: "missing path" };
+  }
+  if (typeof content !== "string") {
+    return { ok: false, error: "content must be a string" };
+  }
+  if (Buffer.byteLength(content, "utf8") > MAX_WRITE_BYTES) {
+    return { ok: false, error: "content too large" };
+  }
+  // Force the file into a `features/` subtree to keep BDD specs in
+  // the conventional location and out of arbitrary parts of the
+  // workspace. `path.posix.normalize` collapses any `..` segments
+  // before we re-prefix.
+  let rel = relPath.replace(/^\/+/, "");
+  if (!rel.startsWith("features/")) rel = path.posix.join("features", rel);
+  if (!rel.endsWith(".feature")) rel = `${rel}.feature`;
+  let abs: string;
+  try {
+    abs = await safeJoin(rel);
+    assertInsideWorkspace(abs);
+  } catch {
+    return { ok: false, error: "invalid path" };
+  }
+  try {
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    await fs.writeFile(abs, content, "utf8");
+    return {
+      ok: true,
+      output: `wrote ${Buffer.byteLength(content, "utf8")} bytes to ${rel}`,
+      meta: { path: rel },
+    };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * Run cucumber-js against the workspace's `features/` directory (or
+ * a caller-supplied path). Thin wrapper over `execCommand` so the
+ * existing timeout / output-cap logic applies.
+ */
+export async function runCucumber(featuresPath?: string): Promise<ToolResult> {
+  const arg = sanitizeRelArg(featuresPath) ?? "features";
+  return execCommand(`npx --yes cucumber-js ${arg}`);
+}
+
+/**
+ * Run the configured deploy command. Operators set
+ * `CLAUDE_CODEX_DEPLOY_CMD` to whatever is appropriate for their
+ * project (`fly deploy`, `kubectl apply -f k8s/`, `gh workflow run
+ * deploy.yml`, etc.). Defaults to `fly deploy` since that's what the
+ * gateway's own infra uses.
+ */
+export async function runDeploy(environment?: string): Promise<ToolResult> {
+  const base = process.env.CLAUDE_CODEX_DEPLOY_CMD || "fly deploy";
+  const env = sanitizeRelArg(environment);
+  const cmd = env ? `${base} ${env}` : base;
+  return execCommand(cmd);
+}
+
+/**
+ * Strip whitespace and bash metacharacters from a planner-supplied
+ * argument. Returns `null` when the result is empty so callers can
+ * easily detect "no value supplied".
+ */
+function sanitizeRelArg(raw: string | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  // Allow paths and simple option-style words; drop everything that
+  // would let a malicious planner inject extra commands.
+  const cleaned = raw.replace(/[^A-Za-z0-9_./:=@\-]/g, "").trim();
+  return cleaned || null;
 }

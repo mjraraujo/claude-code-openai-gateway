@@ -91,9 +91,13 @@ export function buildClaudeEnv(
   base: Record<string, string | undefined>,
   gatewayUrl: string,
 ): Record<string, string | undefined> {
-  // Gateway URL is `http://127.0.0.1:<port>/v1/messages`. The
-  // Anthropic SDK's `ANTHROPIC_BASE_URL` is the *origin* (no path),
-  // so strip the trailing `/v1/messages` if present.
+  // The local gateway always exposes the Anthropic Messages endpoint
+  // at `/v1/messages` (see `bin/gateway.js`), but the Anthropic SDK's
+  // `ANTHROPIC_BASE_URL` expects the *origin* (no path) and re-appends
+  // `/v1/messages` itself. We therefore strip a trailing
+  // `/v1/messages` (with optional slash) and leave any other URL
+  // shape untouched. If the gateway path ever changes, this regex
+  // and the gateway entrypoint must be updated together.
   const origin = gatewayUrl.replace(/\/v1\/messages\/?$/, "");
   return {
     ...base,

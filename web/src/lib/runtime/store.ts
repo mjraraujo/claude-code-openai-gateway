@@ -23,6 +23,14 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 
+import type { SdlcState } from "./sdlc";
+import { INITIAL_SDLC_STATE } from "./sdlc";
+
+// Re-exported for convenience so drive-v2 / route handlers don't
+// have to dual-import from store + sdlc.
+export { INITIAL_SDLC_STATE };
+export type { SdlcState };
+
 export type AgentStatus = "active" | "idle" | "blocked";
 
 export interface AgentState {
@@ -52,6 +60,26 @@ export interface AgentState {
  */
 export type RufloPersona = "core" | "impl" | "review";
 
+/**
+ * Auto-drive operating mode.
+ *
+ *   - "bounded"  — original behaviour: hard caps on steps, wall-time,
+ *     and bytes. Safe default for one-shot tasks invoked from a Kanban
+ *     card or from the Engage modal.
+ *   - "endless"  — the v2 "deliver until done" mode: removes the
+ *     step/wall/byte caps, walks an SDLC state machine, and only
+ *     terminates when every gate is green or the operator hits the
+ *     kill switch. The circuit breaker is still in effect with
+ *     larger thresholds.
+ */
+export type DriveMode = "bounded" | "endless";
+
+export const VALID_DRIVE_MODES: readonly DriveMode[] = ["bounded", "endless"];
+
+export function isValidDriveMode(value: unknown): value is DriveMode {
+  return value === "bounded" || value === "endless";
+}
+
 export interface HarnessState {
   autoApproveSafeEdits: boolean;
   streamToolOutput: boolean;
@@ -76,6 +104,12 @@ export interface HarnessState {
    * "core".
    */
   persona: RufloPersona;
+  /**
+   * Default auto-drive mode used when the operator engages without
+   * an explicit override. Defaults to "bounded" so existing flows
+   * keep their safety rails; opt into "endless" for deliver-until-done.
+   */
+  driveMode: DriveMode;
 }
 
 export const VALID_PERSONAS: readonly RufloPersona[] = ["core", "impl", "review"];
@@ -171,6 +205,16 @@ export interface AutoDriveRun {
   bytesEmitted: number;
   /** Reason for ending (only set on terminal states). */
   reason?: string;
+  /**
+   * Drive mode this run was started under. Surfaced to the UI so the
+   * SDLC progress bar and "endless" indicator render correctly.
+   * Optional for backward-compat with runs persisted before v2.
+   */
+  mode?: DriveMode;
+  /**
+   * SDLC state machine snapshot. Present iff `mode === "endless"`.
+   */
+  sdlc?: SdlcState;
 }
 
 export interface RuntimeState {
@@ -219,6 +263,7 @@ const DEFAULT_STATE: RuntimeState = {
     methodology: "Shape Up",
     devMode: "Spec Driven",
     persona: "core",
+    driveMode: "bounded",
   },
   departments: [
     { id: "engineering", name: "Engineering", cron: [] },
@@ -328,6 +373,10 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
     merged.harness.persona = isValidPersona(parsed.harness.persona)
       ? parsed.harness.persona
       : "core";
+    // Drive mode: validate against the closed set or default to "bounded".
+    merged.harness.driveMode = isValidDriveMode(parsed.harness.driveMode)
+      ? parsed.harness.driveMode
+      : "bounded";
   }
   if (parsed.departments && Array.isArray(parsed.departments)) {
     merged.departments = parsed.departments.map((d) => ({

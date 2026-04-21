@@ -134,11 +134,17 @@ export default function ClaudeTerminalView({
           }),
         });
         if (!res.ok) {
-          const detail = await res.json().catch(() => ({}));
+          // The route returns `{ error: "...", detail?: "..." }` —
+          // rename for readability so the nested `detail.detail`
+          // chain doesn't read like a typo.
+          const errBody = (await res.json().catch(() => ({}))) as {
+            error?: string;
+            detail?: string;
+          };
           const msg =
-            detail.error === "unsupported"
-              ? `interactive terminal unavailable: ${detail.detail ?? "node-pty not installed"}`
-              : `pty create failed (${res.status}): ${detail.error ?? ""}`;
+            errBody.error === "unsupported"
+              ? `interactive terminal unavailable: ${errBody.detail ?? "node-pty not installed"}`
+              : `pty create failed (${res.status}): ${errBody.error ?? ""}`;
           throw new Error(msg);
         }
         const { session } = (await res.json()) as { session: SessionInfo };

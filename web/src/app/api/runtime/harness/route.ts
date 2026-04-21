@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { isSessionAuthenticated } from "@/lib/auth/session";
 import {
   getStore,
+  isValidDriveMode,
   isValidModelId,
   isValidPersona,
   type HarnessState,
@@ -61,6 +62,12 @@ export async function PATCH(req: Request): Promise<Response> {
       // so the field stays forward-compatible with future personas.
       if (isValidPersona(body.persona)) {
         draft.harness.persona = body.persona;
+      }
+    }
+    if (body.driveMode !== undefined) {
+      // Closed enum — same forward-compat pattern as `persona`.
+      if (isValidDriveMode(body.driveMode)) {
+        draft.harness.driveMode = body.driveMode;
       }
     }
   });
