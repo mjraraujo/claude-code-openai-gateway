@@ -1,10 +1,10 @@
-# Mission Control — Web Frontend
+# Claude Codex — Web Frontend
 
-This directory contains the **Mission Control** web dashboard for the
+This directory contains the **Claude Codex** web dashboard (formerly
+"Mission Control") for the
 [`claude-code-openai-gateway`](../README.md) proxy. It is a Next.js (App
-Router) + TypeScript + TailwindCSS application that will become the
-graphical front end for the local Anthropic-to-OpenAI translation
-gateway.
+Router) + TypeScript + TailwindCSS application that is the graphical
+front end for the local Anthropic-to-OpenAI translation gateway.
 
 > **Status:** Initial scaffold only. Authentication wiring, the Kanban
 > task board, the embedded terminal/Monaco workspace, and the agent
@@ -63,7 +63,7 @@ web/
 
 ## Roadmap
 
-The full Mission Control specification lives in the project description.
+The full Claude Codex specification lives in the project description.
 Progress so far:
 
 - [x] **Step 2 — Scaffold** — Next.js 16 (App Router) + TypeScript + Tailwind v4
@@ -74,7 +74,7 @@ Progress so far:
       `sk-ant-…` key in `~/.codex-gateway/session-key.json`. A Next.js
       Proxy (`src/proxy.ts`, formerly Middleware) gates every page
       behind that cookie.
-- [x] **Step 4 — Mission Control layout shells** — three-panel grid
+- [x] **Step 4 — Claude Codex layout shells** — three-panel grid
       under a top status bar. Left: Kanban + sprint/methodology/dev-mode
       toggles. Centre: tabbed workspace (Terminal / Workspace /
       Side-by-Side). Right: agent orchestration, model selector,
@@ -159,9 +159,9 @@ Progress so far:
     pad with `env(safe-area-inset-bottom)` so iPhone home-indicator
     devices don't clip the close button.
 
-## Using Mission Control on a phone
+## Using Claude Codex on a phone
 
-Mission Control is a single responsive web app — there is no separate
+Claude Codex is a single responsive web app — there is no separate
 mobile build to deploy. On phones and small tablets (`<1024 px`) it
 switches to a single-pane shell with a bottom tab bar (**Tasks ·
 Workspace · Agents**); on desktops it keeps the three-column grid. The
@@ -183,15 +183,16 @@ cached offline shell would just show stale state.
 `/login` once on the phone (the same OpenAI device-code flow), and the
 session cookie covers every API call afterwards.
 
-**Network exposure.** If you want to reach Mission Control from your
+**Network exposure.** If you want to reach Claude Codex from your
 phone over the LAN, you need *one* of:
 
 1. **HTTPS** in front of the dashboard (recommended for anything beyond
    `localhost`). The session cookie is set `Secure` in production —
    plain `http://` over the LAN will silently drop it.
-2. `MISSION_CONTROL_INSECURE_COOKIES=1` on the server (testing-only
-   opt-out, see `web/src/lib/auth/session.ts`). Only do this on a
-   trusted network — the cookie travels in cleartext.
+2. `CLAUDE_CODEX_INSECURE_COOKIES=1` (alias `MISSION_CONTROL_INSECURE_COOKIES=1`)
+   on the server (testing-only opt-out, see
+   `web/src/lib/auth/session.ts`). Only do this on a trusted network —
+   the cookie travels in cleartext.
 
 The gateway itself stays on `127.0.0.1:18923` and is not what your
 phone talks to; your phone talks to Next.js on `:3000`, which proxies

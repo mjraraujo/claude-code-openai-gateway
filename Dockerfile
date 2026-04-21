@@ -29,7 +29,7 @@ RUN npm run build
 # ─── Stage 2: runtime ───────────────────────────────────────────────
 FROM node:20-alpine AS runtime
 
-# Toolchain baked into the image so the Mission Control terminal +
+# Toolchain baked into the image so the Claude Codex terminal +
 # chat-driven exec route have a useful surface out of the box. We
 # deliberately do NOT enable `apk` / `apt` at runtime — the chat
 # would need root, which is a security and image-size problem; this

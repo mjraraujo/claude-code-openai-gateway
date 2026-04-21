@@ -1,6 +1,6 @@
 # Legacy
 
-These files predate the Mission Control web dashboard and are kept here
+These files predate the Claude Codex web dashboard and are kept here
 purely for reference. They're **not** built into the current Docker
 image and are not part of the published bin entry.
 
