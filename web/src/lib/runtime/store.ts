@@ -23,6 +23,8 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 
+import { readEnv } from "@/lib/env";
+
 import type { SdlcState } from "./sdlc";
 import { INITIAL_SDLC_STATE } from "./sdlc";
 
@@ -159,6 +161,28 @@ export interface SubTask {
   done: boolean;
 }
 
+/**
+ * Single recorded message in a Three Amigos transcript persisted on
+ * a Task. Bounded by `MAX_TRANSCRIPT_ENTRIES_PER_TASK` /
+ * `MAX_TRANSCRIPT_MESSAGE_CHARS` so the on-disk JSON stays small.
+ */
+export type AmigosTranscriptKind =
+  | "agent_thinking"
+  | "agent_message"
+  | "consensus"
+  | "gherkin_draft"
+  | "done"
+  | "error";
+
+export interface AmigosTranscriptEntry {
+  at: number;
+  kind: AmigosTranscriptKind;
+  /** Persona id for `agent_*` entries — one of "business" | "dev" | "qa" by convention. */
+  persona?: string;
+  /** Free-form payload (message body, gherkin text, error reason, …). */
+  text: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -169,6 +193,53 @@ export interface Task {
   runId?: string;
   /** Optional checklist of sub-items. Empty or omitted = no checklist. */
   subtasks?: SubTask[];
+  /** Workspace this card belongs to. Falls back to the active workspace when absent. */
+  workspaceId?: string;
+  /** ISO-8601 due date (date or full datetime). Validated client-side and on the route. */
+  dueDate?: string;
+  /** Free-form list of assignee identifiers (agent ids or human handles). Capped at 8. */
+  assignees?: string[];
+  /** Optional sprint association. */
+  sprintId?: string;
+  /** Path (relative to the workspace) of the .feature file emitted by Three Amigos for this card. */
+  featurePath?: string;
+  /** Bounded transcript of the most recent Three Amigos refinement run. */
+  amigosTranscript?: AmigosTranscriptEntry[];
+}
+
+/**
+ * A user-visible workspace. The `root` is an absolute filesystem path
+ * the dashboard's fs/exec tools resolve against. Multiple workspaces
+ * let one dashboard switch between projects without restarting.
+ */
+export interface Workspace {
+  id: string;
+  name: string;
+  root: string;
+  createdAt: number;
+}
+
+/** A lightweight sprint/iteration that tasks can be associated with. */
+export interface Sprint {
+  id: string;
+  name: string;
+  /** ISO-8601 start date. */
+  startsAt?: string;
+  /** ISO-8601 end date. */
+  endsAt?: string;
+}
+
+/**
+ * Per-workspace scaffolding ledger. Records which methodology /
+ * devMode templates have been materialised so seeding stays
+ * idempotent across harness changes and process restarts.
+ */
+export interface ScaffoldRecord {
+  workspaceId: string;
+  methodology?: string;
+  devMode?: string;
+  agentsSeeded?: boolean;
+  filesSeeded?: string[];
 }
 
 export type AutoDriveStepKind =
@@ -268,6 +339,14 @@ export interface RuntimeState {
   harness: HarnessState;
   departments: Department[];
   tasks: Task[];
+  /** Configured workspaces. Always non-empty after `ensureLoaded()`. */
+  workspaces: Workspace[];
+  /** Id of the workspace currently in focus. */
+  activeWorkspaceId: string;
+  /** Sprints (light-weight iterations) cards can be attached to. */
+  sprints: Sprint[];
+  /** Per-workspace scaffolding ledger; tracks methodology/devMode seeding. */
+  scaffolds: ScaffoldRecord[];
   autoDrive: {
     /** The active run, if any. */
     current: AutoDriveRun | null;
@@ -296,6 +375,30 @@ const SEED_TASKS: Task[] = [
   { id: "T-106", title: "Full Auto Drive safety rails", column: "shipped", tag: "safety", createdAt: 0 },
 ];
 
+/**
+ * Default workspace root resolution. Honours the same env vars as
+ * `@/lib/fs/workspace` so the seed workspace registers a directory
+ * the existing `safeJoin` already knows about. Falls back to the
+ * parent of `process.cwd()` (the gateway repo root when running
+ * from `web/`) so first-run dashboards are immediately useful.
+ */
+export const DEFAULT_WORKSPACE_ROOT = path.resolve(
+  readEnv("CLAUDE_CODEX_WORKSPACE", "MISSION_CONTROL_WORKSPACE") ||
+    path.join(process.cwd(), ".."),
+);
+
+/**
+ * Parent directory under which "+ New workspace" creates fresh
+ * project directories. Operators can override via env so a Docker
+ * deployment can mount a host folder that holds many workspaces.
+ */
+export const WORKSPACES_PARENT_DIR = path.resolve(
+  readEnv("CLAUDE_CODEX_WORKSPACES_DIR", "MISSION_CONTROL_WORKSPACES_DIR") ||
+    path.join(os.homedir() || ".", "codex-workspaces"),
+);
+
+const DEFAULT_WORKSPACE_ID = "default";
+
 const DEFAULT_STATE: RuntimeState = {
   agents: [
     { id: "ruflo-core", name: "ruflo · core", status: "idle", skill: "—" },
@@ -319,6 +422,17 @@ const DEFAULT_STATE: RuntimeState = {
     { id: "ops", name: "Ops", cron: [] },
   ],
   tasks: SEED_TASKS,
+  workspaces: [
+    {
+      id: DEFAULT_WORKSPACE_ID,
+      name: "default",
+      root: DEFAULT_WORKSPACE_ROOT,
+      createdAt: 0,
+    },
+  ],
+  activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+  sprints: [],
+  scaffolds: [],
   autoDrive: { current: null, history: [] },
 };
 
@@ -454,7 +568,46 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
       createdAt: typeof t.createdAt === "number" ? t.createdAt : 0,
       runId: typeof t.runId === "string" ? t.runId : undefined,
       subtasks: normalizeSubtasks((t as { subtasks?: unknown }).subtasks),
+      workspaceId: normalizeOptionalId((t as { workspaceId?: unknown }).workspaceId),
+      dueDate: normalizeIsoDate((t as { dueDate?: unknown }).dueDate),
+      assignees: normalizeAssignees((t as { assignees?: unknown }).assignees),
+      sprintId: normalizeOptionalId((t as { sprintId?: unknown }).sprintId),
+      featurePath: normalizeOptionalRelPath(
+        (t as { featurePath?: unknown }).featurePath,
+      ),
+      amigosTranscript: normalizeAmigosTranscript(
+        (t as { amigosTranscript?: unknown }).amigosTranscript,
+      ),
     }));
+  }
+  // Workspaces — keep at least the default entry so consumers can
+  // assume `state.workspaces.length >= 1`.
+  if (parsed.workspaces && Array.isArray(parsed.workspaces)) {
+    const ws: Workspace[] = [];
+    for (const raw of parsed.workspaces) {
+      const norm = normalizeWorkspace(raw);
+      if (norm) ws.push(norm);
+    }
+    if (ws.length > 0) merged.workspaces = ws;
+  }
+  if (typeof parsed.activeWorkspaceId === "string" && parsed.activeWorkspaceId) {
+    if (merged.workspaces.some((w) => w.id === parsed.activeWorkspaceId)) {
+      merged.activeWorkspaceId = parsed.activeWorkspaceId;
+    }
+  }
+  if (parsed.sprints && Array.isArray(parsed.sprints)) {
+    merged.sprints = [];
+    for (const raw of parsed.sprints) {
+      const norm = normalizeSprint(raw);
+      if (norm) merged.sprints.push(norm);
+    }
+  }
+  if (parsed.scaffolds && Array.isArray(parsed.scaffolds)) {
+    merged.scaffolds = [];
+    for (const raw of parsed.scaffolds) {
+      const norm = normalizeScaffold(raw);
+      if (norm) merged.scaffolds.push(norm);
+    }
   }
   const reportRaw = (parsed as { amigosReport?: unknown }).amigosReport;
   const report = normalizeAmigosReport(reportRaw);
@@ -635,6 +788,192 @@ export function normalizeSubtasks(raw: unknown): SubTask[] | undefined {
     out.push({ id, title, done: r.done === true });
   }
   return out.length > 0 ? out : undefined;
+}
+
+/** Bounds for the persisted Three Amigos transcript on a Task. */
+export const MAX_TRANSCRIPT_ENTRIES_PER_TASK = 200;
+export const MAX_TRANSCRIPT_MESSAGE_CHARS = 2000;
+/** Cap on assignees per card. Wide enough for a real team, narrow enough to keep payloads small. */
+export const MAX_ASSIGNEES_PER_TASK = 8;
+/** Cap on the per-assignee identifier length. */
+export const MAX_ASSIGNEE_LENGTH = 80;
+/** Cap on workspaces per dashboard. Soft limit to avoid runaway state. */
+export const MAX_WORKSPACES = 32;
+/** Cap on a workspace name. */
+export const MAX_WORKSPACE_NAME = 64;
+/** Cap on a sprint name. */
+export const MAX_SPRINT_NAME = 80;
+
+const TRANSCRIPT_KIND_SET = new Set<AmigosTranscriptKind>([
+  "agent_thinking",
+  "agent_message",
+  "consensus",
+  "gherkin_draft",
+  "done",
+  "error",
+]);
+
+/**
+ * Coerce a deserialized value into a `Workspace` or null. The `root`
+ * is required and must be an absolute path so the dashboard's path
+ * sanitizer has something concrete to anchor against.
+ */
+export function normalizeWorkspace(raw: unknown): Workspace | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === "string" && /^[\w.\-]{1,64}$/.test(r.id) ? r.id : null;
+  const name =
+    typeof r.name === "string" && r.name.trim()
+      ? r.name.trim().slice(0, MAX_WORKSPACE_NAME)
+      : null;
+  const root =
+    typeof r.root === "string" && path.isAbsolute(r.root)
+      ? path.resolve(r.root)
+      : null;
+  if (!id || !name || !root) return null;
+  return {
+    id,
+    name,
+    root,
+    createdAt: typeof r.createdAt === "number" ? r.createdAt : 0,
+  };
+}
+
+/** Coerce a deserialized value into a `Sprint` or null. */
+export function normalizeSprint(raw: unknown): Sprint | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === "string" && r.id ? r.id : null;
+  const name =
+    typeof r.name === "string" && r.name.trim()
+      ? r.name.trim().slice(0, MAX_SPRINT_NAME)
+      : null;
+  if (!id || !name) return null;
+  return {
+    id,
+    name,
+    startsAt: normalizeIsoDate(r.startsAt),
+    endsAt: normalizeIsoDate(r.endsAt),
+  };
+}
+
+/** Coerce a deserialized value into a `ScaffoldRecord` or null. */
+function normalizeScaffold(raw: unknown): ScaffoldRecord | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const workspaceId = typeof r.workspaceId === "string" && r.workspaceId ? r.workspaceId : null;
+  if (!workspaceId) return null;
+  const filesSeeded = Array.isArray(r.filesSeeded)
+    ? r.filesSeeded.filter((x): x is string => typeof x === "string").slice(0, 200)
+    : undefined;
+  return {
+    workspaceId,
+    methodology:
+      typeof r.methodology === "string" ? r.methodology.slice(0, 64) : undefined,
+    devMode: typeof r.devMode === "string" ? r.devMode.slice(0, 64) : undefined,
+    agentsSeeded: r.agentsSeeded === true ? true : undefined,
+    filesSeeded,
+  };
+}
+
+function normalizeOptionalId(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw) return undefined;
+  // Same shape as workspace / sprint ids; constrains but doesn't
+  // reject runtime-generated `T_xxx` style ids.
+  if (!/^[\w.\-]{1,64}$/.test(raw)) return undefined;
+  return raw;
+}
+
+function normalizeOptionalRelPath(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw) return undefined;
+  // Reject absolute paths and parent traversal — featurePath is a
+  // workspace-relative POSIX path stored only for UI linkage.
+  const cleaned = raw.replace(/\\/g, "/").trim();
+  if (!cleaned || cleaned.startsWith("/")) return undefined;
+  if (cleaned.split("/").some((seg) => seg === "..")) return undefined;
+  return cleaned.slice(0, 1024);
+}
+
+/**
+ * Validate an ISO-8601 date or datetime string. Returns the
+ * canonicalised string or undefined. Trailing whitespace and case
+ * are normalised; we use Date.parse as the authoritative validator
+ * (rejects garbage like "tomorrow" or "2026-13-99").
+ */
+export function normalizeIsoDate(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const s = raw.trim();
+  if (!s) return undefined;
+  // Cap so malicious clients can't store giant blobs in the field.
+  if (s.length > 40) return undefined;
+  const parsed = Date.parse(s);
+  if (!Number.isFinite(parsed)) return undefined;
+  return s;
+}
+
+/**
+ * Coerce a deserialized value into a sanitised assignees array, or
+ * undefined when there are no valid entries. Each entry is a
+ * non-empty string capped at MAX_ASSIGNEE_LENGTH; duplicates are
+ * collapsed; the array is capped at MAX_ASSIGNEES_PER_TASK.
+ */
+export function normalizeAssignees(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    // Allow letters, digits, and a few common punctuation chars seen
+    // in user handles / agent ids. Strip control characters and
+    // anything that would make the value unsafe to render verbatim.
+    // eslint-disable-next-line no-control-regex
+    const cleaned = item.replace(/[\x00-\x1f\x7f<>`]/g, "").trim();
+    if (!cleaned) continue;
+    const capped = cleaned.slice(0, MAX_ASSIGNEE_LENGTH);
+    if (seen.has(capped)) continue;
+    seen.add(capped);
+    out.push(capped);
+    if (out.length >= MAX_ASSIGNEES_PER_TASK) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * Coerce a deserialized value into a sanitised Three Amigos
+ * transcript, or undefined. Bounded to keep on-disk JSON small.
+ */
+export function normalizeAmigosTranscript(
+  raw: unknown,
+): AmigosTranscriptEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: AmigosTranscriptEntry[] = [];
+  for (const item of raw) {
+    if (out.length >= MAX_TRANSCRIPT_ENTRIES_PER_TASK) break;
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    if (!TRANSCRIPT_KIND_SET.has(r.kind as AmigosTranscriptKind)) continue;
+    const text = typeof r.text === "string" ? r.text : "";
+    if (!text) continue;
+    out.push({
+      at: typeof r.at === "number" ? r.at : Date.now(),
+      kind: r.kind as AmigosTranscriptKind,
+      persona:
+        typeof r.persona === "string" && r.persona
+          ? r.persona.slice(0, 32)
+          : undefined,
+      text: text.slice(0, MAX_TRANSCRIPT_MESSAGE_CHARS),
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** Convenience: locate the active workspace, never returning null. */
+export function activeWorkspace(state: RuntimeState): Workspace {
+  const found = state.workspaces.find((w) => w.id === state.activeWorkspaceId);
+  if (found) return found;
+  // Fallback: if the active id became stale (workspace deleted),
+  // fall back to the first entry; callers will see a coherent root.
+  return state.workspaces[0];
 }
 
 /**

@@ -308,7 +308,8 @@ Hostinger sells generic KVM Linux VPS plans (KVM 1/2/4/8). Claude Codex runs com
 | Variable | Where | Default | Purpose |
 | --- | --- | --- | --- |
 | `CLAUDE_CODEX_GATEWAY_URL` (alias `MISSION_CONTROL_GATEWAY_URL`) | container env (set in `Dockerfile`) | `http://127.0.0.1:18923/v1/messages` | URL the dashboard uses to reach the gateway. The gateway accepts any POST path (Anthropic Messages SSE shape). |
-| `CLAUDE_CODEX_WORKSPACE` (alias `MISSION_CONTROL_WORKSPACE`) | container env (set in compose) | `/workspace` | Root the dashboard's fs/exec tools are sandboxed to |
+| `CLAUDE_CODEX_WORKSPACE` (alias `MISSION_CONTROL_WORKSPACE`) | container env (set in compose) | `/workspace` | Root of the **default** workspace. The dashboard's fs/exec/chat-tool calls anchor here unless the operator switches to a different workspace via the top-bar selector. |
+| `CLAUDE_CODEX_WORKSPACES_DIR` | container env | `/workspace` | Parent directory the dashboard creates fresh workspaces under when the operator clicks "+ new workspace" without supplying an explicit `root`. |
 | `NODE_ENV` | container env | `production` | Standard Node env |
 | `PORT` | container env | `3000` | Next.js port |
 | `HOSTNAME` | container env | `0.0.0.0` | Next.js bind address (inside container) |
@@ -322,6 +323,63 @@ The gateway also reads its own config files from `~/.codex-gateway/`:
 * `token.json` — OAuth refresh + access token
 * `config.json` — `target_api_url`, `default_model`
 * `claude-codex.json` — Claude Codex runtime state (legacy `mission-control.json` is auto-migrated on first boot)
+
+## Workspaces, methodology scaffolding & `agents/*.md`
+
+Each workspace is a directory on disk with a registered id. The
+dashboard always operates against one **active workspace**; switch
+between them from the workspace selector in the top status bar, or
+create a new one with the "+ new workspace" button (the directory
+is created under `CLAUDE_CODEX_WORKSPACES_DIR`).
+
+When you switch the **methodology** or **dev-mode** in the harness
+panel, the dashboard seeds an opinionated set of starter files into
+the active workspace. The seeding is idempotent — existing files
+are never overwritten. Currently registered methodologies:
+
+| id | seeds |
+| --- | --- |
+| `spec-driven` | `SPEC.md`, `DECISIONS.md` |
+| `bdd` | `features/example.feature`, `features/README.md` |
+| `tdd` | `tests/README.md` |
+| `xp` | `PRACTICES.md` |
+
+### `agents/*.md` format
+
+Each workspace can contain an `agents/` directory of one Markdown
+file per agent. The dashboard reads these on demand, and the Three
+Amigos refinement uses them as the per-persona system prompt.
+
+A file looks like:
+
+```markdown
+---
+name: Dev
+role: developer
+model: gpt-5.3-codex
+skill: implementation
+tools: [read_file, write_file, exec]
+---
+
+# Dev
+
+You are the Dev voice in the Three Amigos refinement. Push for
+implementation feasibility…
+```
+
+Frontmatter keys:
+
+* `name` — display name (defaults to the file's basename)
+* `role` — free-form role label
+* `model` — overrides the global model for this agent
+* `skill` — short description of the agent's specialty
+* `tools` — flow-style list (`[a, b]`) or CSV (`a, b`) of tool ids
+  this agent is allowed to invoke
+
+The body (everything after the closing `---`) becomes the agent's
+system prompt verbatim. The first time a workspace is activated,
+the bundled defaults (Dev / QA / PO — the "Three Amigos" trio)
+are seeded automatically.
 
 ## Persistence, backup & re-login
 

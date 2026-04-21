@@ -18,18 +18,31 @@
 FROM node:20-alpine AS web-builder
 
 # `node-pty` is an `optionalDependencies` of web/. Its native binding
-# only compiles when the toolchain is present — without these
-# packages `npm ci` skips it and the runtime image has no PTY support.
-# We install build-base + python3 + bash here so the binding is
-# compiled once at build time and the resulting `node_modules/node-pty`
-# is copied into the standalone output by Next.js's tracer.
-RUN apk add --no-cache python3 make g++ bash
+# only compiles when the full toolchain is present — without these
+# packages `npm ci` silently skips it (because it's optional) and the
+# runtime image has no PTY support, surfacing as
+# "node-pty native binding is not available in this build" in the
+# interactive terminal.
+#
+# Required Alpine packages:
+#   python3 / make / g++ — node-gyp toolchain.
+#   bash                  — node-gyp invokes shell scripts.
+#   linux-headers         — node-pty's C++ sources include <pty.h> and
+#                           other kernel headers; without this the
+#                           native build fails on musl/Alpine.
+RUN apk add --no-cache python3 make g++ bash linux-headers
 
 WORKDIR /app/web
 
 # Copy lockfile + manifest first to maximise layer cache hits.
 COPY web/package.json web/package-lock.json* ./
 RUN npm ci --no-audit --no-fund
+
+# Fail the build loudly if node-pty's optional native binding didn't
+# compile — otherwise a broken toolchain would ship a degraded image
+# that only complains at runtime when the operator opens a terminal.
+RUN node -e "require('node-pty')" \
+    || (echo "ERROR: node-pty failed to install/build — check the toolchain in this stage" && exit 1)
 
 COPY web/ ./
 RUN npm run build
@@ -105,13 +118,24 @@ COPY --from=web-builder /app/web/.next/standalone ./web/
 COPY --from=web-builder /app/web/.next/static ./web/.next/static
 COPY --from=web-builder /app/web/public ./web/public
 
+# Explicitly carry node-pty (and its runtime dep node-addon-api) over
+# from the builder. Next.js's standalone tracer is unreliable for
+# native addons loaded lazily via `createRequire(...)("node-pty")`
+# and can drop the compiled `build/Release/pty.node` binding, which
+# surfaces as "node-pty native binding is not available in this
+# build" in the interactive terminal. Copying the package directly
+# guarantees the binding ships with the image.
+COPY --from=web-builder /app/web/node_modules/node-pty ./web/node_modules/node-pty
+COPY --from=web-builder /app/web/node_modules/node-addon-api ./web/node_modules/node-addon-api
+
 # Entrypoint script: starts the gateway in the background, then the
 # Next.js server in the foreground. Either child exiting kills the
 # container so Docker / k8s can restart it cleanly.
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p /home/claude/.codex-gateway \
-    && chown -R claude:claude /app /home/claude
+    && mkdir -p /workspace \
+    && chown -R claude:claude /app /home/claude /workspace
 
 USER claude
 ENV HOME=/home/claude
@@ -120,7 +144,9 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
     CLAUDE_CODEX_GATEWAY_URL=http://127.0.0.1:18923/v1/messages \
-    MISSION_CONTROL_GATEWAY_URL=http://127.0.0.1:18923/v1/messages
+    MISSION_CONTROL_GATEWAY_URL=http://127.0.0.1:18923/v1/messages \
+    CLAUDE_CODEX_WORKSPACE=/workspace \
+    CLAUDE_CODEX_WORKSPACES_DIR=/workspace
 
 EXPOSE 3000 18923
 
