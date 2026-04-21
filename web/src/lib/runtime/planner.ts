@@ -56,7 +56,7 @@ export interface PlannerInput {
   persona?: RufloPersona;
 }
 
-export const DEFAULT_PLANNER_MODEL = "gpt-5.4";
+export const DEFAULT_PLANNER_MODEL = "gpt-5.3-codex";
 
 export async function plan(input: PlannerInput): Promise<Plan> {
   const token = await getValidToken();

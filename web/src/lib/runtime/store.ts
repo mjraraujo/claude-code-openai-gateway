@@ -52,18 +52,6 @@ export interface AgentState {
  */
 export type RufloPersona = "core" | "impl" | "review";
 
-/**
- * Outbound webhook configuration. When `enabled` and `url` are set,
- * Kanban transitions POST a JSON payload to `url` (best-effort, never
- * blocks the API response). `secret`, when present, is used to compute
- * an HMAC-SHA256 signature in the `X-Claude-Codex-Signature` header.
- */
-export interface WebhookConfig {
-  url: string;
-  secret?: string;
-  enabled: boolean;
-}
-
 export interface HarnessState {
   autoApproveSafeEdits: boolean;
   streamToolOutput: boolean;
@@ -88,11 +76,6 @@ export interface HarnessState {
    * "core".
    */
   persona: RufloPersona;
-  /**
-   * Optional outbound webhook for Kanban transitions. `null` means
-   * disabled. See {@link WebhookConfig}.
-   */
-  webhook: WebhookConfig | null;
 }
 
 export const VALID_PERSONAS: readonly RufloPersona[] = ["core", "impl", "review"];
@@ -114,31 +97,7 @@ export function personaAgentId(persona: RufloPersona): string {
   }
 }
 
-/** Max URL length accepted in `WebhookConfig.url`. */
-export const MAX_WEBHOOK_URL_LENGTH = 2048;
-/** Max secret length accepted in `WebhookConfig.secret`. */
-export const MAX_WEBHOOK_SECRET_LENGTH = 256;
-
-/**
- * Validate + normalize a webhook URL. Must parse as `http(s)://…` and
- * fit under {@link MAX_WEBHOOK_URL_LENGTH}. Returns the normalized
- * `URL.toString()` form on success, `null` otherwise.
- */
-export function normalizeWebhookUrl(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  if (!trimmed || trimmed.length > MAX_WEBHOOK_URL_LENGTH) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-  return parsed.toString();
-}
-
-export const DEFAULT_MODEL = "gpt-5.4";
+export const DEFAULT_MODEL = "gpt-5.3-codex";
 
 export interface CronJob {
   id: string;
@@ -260,7 +219,6 @@ const DEFAULT_STATE: RuntimeState = {
     methodology: "Shape Up",
     devMode: "Spec Driven",
     persona: "core",
-    webhook: null,
   },
   departments: [
     { id: "engineering", name: "Engineering", cron: [] },
@@ -370,8 +328,6 @@ function mergeWithDefaults(parsed: Partial<RuntimeState>): RuntimeState {
     merged.harness.persona = isValidPersona(parsed.harness.persona)
       ? parsed.harness.persona
       : "core";
-    // Webhook: only keep a config object that round-trips validation.
-    merged.harness.webhook = normalizeWebhook(parsed.harness.webhook);
   }
   if (parsed.departments && Array.isArray(parsed.departments)) {
     merged.departments = parsed.departments.map((d) => ({
@@ -467,29 +423,6 @@ function normalizeAgent(raw: unknown): AgentState | null {
     department: dept || undefined,
     model: isValidModelId(model) ? model : undefined,
   };
-}
-
-/**
- * Coerce an arbitrary deserialized value into a {@link WebhookConfig}.
- * Returns `null` when the value is missing/invalid so the harness
- * field round-trips as "disabled" rather than a broken object.
- *
- * Exported so the `/api/runtime/webhook` PATCH handler can reuse the
- * exact same validation surface as the on-disk merge path.
- */
-export function normalizeWebhook(raw: unknown): WebhookConfig | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const url = normalizeWebhookUrl(r.url);
-  if (!url) return null;
-  const enabled = r.enabled === true;
-  const secret =
-    typeof r.secret === "string"
-      ? r.secret.slice(0, MAX_WEBHOOK_SECRET_LENGTH)
-      : undefined;
-  const out: WebhookConfig = { url, enabled };
-  if (secret) out.secret = secret;
-  return out;
 }
 
 /**

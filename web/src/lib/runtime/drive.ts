@@ -89,7 +89,7 @@ export async function startAutoDrive(opts: StartOptions): Promise<AutoDriveRun> 
   if (!goal) throw new Error("missing_goal");
 
   const initialSnap = await getStore().snapshot();
-  const model = (opts.model ?? initialSnap.harness.model ?? "").trim() || "gpt-5.4";
+  const model = (opts.model ?? initialSnap.harness.model ?? "").trim() || "gpt-5.3-codex";
 
   const options: ActiveLoop["options"] = {
     goal,

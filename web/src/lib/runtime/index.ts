@@ -15,13 +15,9 @@ export {
   isValidPersona,
   newId,
   normalizeSubtasks,
-  normalizeWebhook,
-  normalizeWebhookUrl,
   personaAgentId,
   MAX_SUBTASK_TITLE_LENGTH,
   MAX_SUBTASKS_PER_TASK,
-  MAX_WEBHOOK_URL_LENGTH,
-  MAX_WEBHOOK_SECRET_LENGTH,
   VALID_PERSONAS,
 } from "./store";
 export type {
@@ -38,7 +34,6 @@ export type {
   SubTask,
   Task,
   TaskColumn,
-  WebhookConfig,
 } from "./store";
 export { startAutoDrive, stopAutoDrive, forceClearAutoDrive } from "./drive";
 export { parseSchedule } from "./cron";

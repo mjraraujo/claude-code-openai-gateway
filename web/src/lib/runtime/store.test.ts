@@ -38,7 +38,7 @@ describe("runtime store · defaults", () => {
   it("seeds the default state on first read", async () => {
     const { getStore } = await importStore();
     const snap = await getStore().snapshot();
-    expect(snap.harness.model).toBe("gpt-5.4");
+    expect(snap.harness.model).toBe("gpt-5.3-codex");
     expect(snap.harness.autoApproveSafeEdits).toBe(true);
     expect(snap.tasks.length).toBeGreaterThan(0);
     expect(snap.agents.find((a) => a.id === "harness")).toBeTruthy();
@@ -144,7 +144,7 @@ describe("runtime store · mergeWithDefaults (reload)", () => {
     );
     const { getStore } = await importStore();
     const snap = await getStore().snapshot();
-    expect(snap.harness.model).toBe("gpt-5.4");
+    expect(snap.harness.model).toBe("gpt-5.3-codex");
     // Other fields still merge.
     expect(snap.harness.autoApproveSafeEdits).toBe(false);
   });
@@ -253,12 +253,11 @@ describe("runtime store · normalizeSubtasks", () => {
   });
 });
 
-describe("runtime store · persona + webhook defaults", () => {
-  it("seeds persona='core' and webhook=null", async () => {
+describe("runtime store · persona defaults", () => {
+  it("seeds persona='core'", async () => {
     const { getStore } = await importStore();
     const snap = await getStore().snapshot();
     expect(snap.harness.persona).toBe("core");
-    expect(snap.harness.webhook).toBeNull();
   });
 
   it("clamps an unknown persona on disk back to 'core'", async () => {
@@ -273,7 +272,7 @@ describe("runtime store · persona + webhook defaults", () => {
     expect(snap.harness.persona).toBe("core");
   });
 
-  it("preserves a valid persona and a valid webhook on reload", async () => {
+  it("preserves a valid persona on reload", async () => {
     const dir = path.join(tmpDir, ".codex-gateway");
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     await fs.writeFile(
@@ -281,34 +280,12 @@ describe("runtime store · persona + webhook defaults", () => {
       JSON.stringify({
         harness: {
           persona: "review",
-          webhook: {
-            url: "https://example.com/hook",
-            secret: "shh",
-            enabled: true,
-          },
         },
       }),
     );
     const { getStore } = await importStore();
     const snap = await getStore().snapshot();
     expect(snap.harness.persona).toBe("review");
-    expect(snap.harness.webhook?.url).toContain("example.com");
-    expect(snap.harness.webhook?.enabled).toBe(true);
-    expect(snap.harness.webhook?.secret).toBe("shh");
-  });
-
-  it("drops a webhook with an invalid URL on reload", async () => {
-    const dir = path.join(tmpDir, ".codex-gateway");
-    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    await fs.writeFile(
-      path.join(dir, "claude-codex.json"),
-      JSON.stringify({
-        harness: { webhook: { url: "ftp://nope", enabled: true } },
-      }),
-    );
-    const { getStore } = await importStore();
-    const snap = await getStore().snapshot();
-    expect(snap.harness.webhook).toBeNull();
   });
 });
 
