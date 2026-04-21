@@ -213,8 +213,11 @@ function parsePlan(raw: string): Plan {
  * Slice out the outermost balanced `{ … }` object from a string, so
  * we can recover the plan JSON even when the model emitted prose
  * before/after it. Returns null if no balanced object is found.
+ *
+ * Exported for unit tests — the actual call site is internal to
+ * `parsePlan` below.
  */
-function extractJsonObject(s: string): string | null {
+export function extractJsonObject(s: string): string | null {
   const start = s.indexOf("{");
   if (start < 0) return null;
   let depth = 0;

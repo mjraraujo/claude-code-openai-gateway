@@ -1,4 +1,4 @@
-# Fly.io config for the Mission Control container.
+# Fly.io config for the Claude Codex container.
 #
 # The image is built from the repository's multi-stage Dockerfile and runs
 # both the Next.js dashboard (port 3000) and the gateway proxy (port 18923)

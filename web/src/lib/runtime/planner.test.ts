@@ -15,7 +15,7 @@ vi.mock("@/lib/auth/storage", () => ({
   getOrCreateSessionApiKey: async () => "sk-test",
 }));
 
-import { plan } from "./planner";
+import { plan, extractJsonObject, buildSystemPrompt } from "./planner";
 import type { AutoDriveStep } from "./store";
 
 beforeEach(() => {
@@ -84,5 +84,71 @@ describe("planner · mock mode", () => {
     if (p.action.tool === "done") {
       expect(p.action.summary).toMatch(/mock planner done/);
     }
+  });
+});
+
+describe("planner · extractJsonObject", () => {
+  it("returns the lone object when input is exactly one JSON value", () => {
+    expect(extractJsonObject('{"a":1}')).toBe('{"a":1}');
+  });
+
+  it("recovers the JSON when wrapped in prose before and after", () => {
+    const got = extractJsonObject(
+      'Here you go:\n{"thought":"hi","action":{"tool":"done","summary":"x"}}\nThanks!',
+    );
+    expect(got).toBe('{"thought":"hi","action":{"tool":"done","summary":"x"}}');
+  });
+
+  it("handles nested objects without truncating", () => {
+    const obj =
+      '{"thought":"deep","action":{"tool":"write_file","path":"a","content":"b"}}';
+    expect(extractJsonObject(`prefix ${obj} suffix`)).toBe(obj);
+  });
+
+  it("ignores braces that appear inside string literals", () => {
+    // The `}` inside the string must not close the outer object.
+    const got = extractJsonObject(
+      'noise {"action":{"tool":"exec","command":"echo \\"} not the end\\""}} tail',
+    );
+    expect(got).toBe(
+      '{"action":{"tool":"exec","command":"echo \\"} not the end\\""}}',
+    );
+  });
+
+  it("returns null when no opening brace is present", () => {
+    expect(extractJsonObject("no json here")).toBeNull();
+  });
+
+  it("returns null when the object is unbalanced", () => {
+    expect(extractJsonObject("{ unclosed")).toBeNull();
+  });
+});
+
+describe("planner · buildSystemPrompt", () => {
+  it("returns the base prompt when no hints are provided", () => {
+    const got = buildSystemPrompt({});
+    expect(got).toMatch(/Claude Codex auto-drive planner/);
+    expect(got).not.toMatch(/Methodology:/);
+    expect(got).not.toMatch(/Dev mode:/);
+  });
+
+  it("appends a methodology hint when provided", () => {
+    const got = buildSystemPrompt({ methodology: "Shape Up" });
+    expect(got).toMatch(/Methodology: Shape Up/);
+  });
+
+  it("appends both hints when both provided", () => {
+    const got = buildSystemPrompt({
+      methodology: "Scrum",
+      devMode: "Spec Driven",
+    });
+    expect(got).toMatch(/Methodology: Scrum/);
+    expect(got).toMatch(/Dev mode: Spec Driven/);
+  });
+
+  it("ignores whitespace-only hints", () => {
+    const got = buildSystemPrompt({ methodology: "   ", devMode: "" });
+    expect(got).not.toMatch(/Methodology:/);
+    expect(got).not.toMatch(/Dev mode:/);
   });
 });

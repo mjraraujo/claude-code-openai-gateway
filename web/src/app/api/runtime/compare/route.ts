@@ -109,7 +109,7 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json(
       {
         error: "no_token",
-        message: "sign in via Mission Control to compare models",
+        message: "sign in via Claude Codex to compare models",
       },
       { status: 401 },
     );
