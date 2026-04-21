@@ -845,14 +845,17 @@ async function main() {
   //      stdin...". Detect that combination and drop the flag with a
   //      warning so the chat opens normally.
   //
-  //   2. The Write tool refuses to create new files unless an
-  //      explicit permission flag is set, leading to "ERR: refusing
-  //      to create new file" in agent runs. If the user hasn't
-  //      already specified a permission flag, default to
-  //      `--permission-mode acceptEdits` so the agent can create and
-  //      edit files inside its working directory. Read/Bash etc. are
-  //      unaffected — this is the same default the upstream CLI
-  //      offers via its TUI permission picker.
+  //   2. The Write/Edit/Bash tools all prompt for confirmation
+  //      unless the user opts out, which makes long agent runs grind
+  //      to a halt. By operator request the gateway defaults to
+  //      `--dangerously-skip-permissions` so every tool call goes
+  //      through without a prompt. The user can still opt out by
+  //      passing any explicit permission flag (`--permission-mode`,
+  //      `--allowedTools`, or `--dangerously-skip-permissions`
+  //      itself), in which case we leave their choice alone. Set
+  //      `CODEX_GATEWAY_SAFE_PERMISSIONS=1` to disable the auto-
+  //      injection entirely if the dangerous default is ever
+  //      undesirable in a particular environment.
   let claudeArgs = args.filter((a) => a !== '--login');
 
   const stdinIsTty = Boolean(process.stdin.isTTY);
@@ -873,8 +876,13 @@ async function main() {
       a.startsWith('--allowedTools=') ||
       a === '--dangerously-skip-permissions',
   );
-  if (!hasPermissionFlag) {
-    claudeArgs.push('--permission-mode', 'acceptEdits');
+  if (!hasPermissionFlag && process.env.CODEX_GATEWAY_SAFE_PERMISSIONS !== '1') {
+    claudeArgs.push('--dangerously-skip-permissions');
+    console.warn(
+      '  ⚠️  Auto-applying --dangerously-skip-permissions (Claude tools will not prompt).\n' +
+      '      Set CODEX_GATEWAY_SAFE_PERMISSIONS=1 to disable this default,\n' +
+      '      or pass an explicit --permission-mode / --allowedTools flag.',
+    );
   }
 
   // Launch claude
