@@ -164,6 +164,8 @@ export function StatusBar() {
             </span>
           </>
         )}
+        <span className="text-zinc-700">·</span>
+        <WorkspaceSwitcher runtime={runtime} />
       </div>
 
       <div className="flex items-center gap-3">
@@ -218,6 +220,174 @@ function formatRelative(ts: number): string {
   if (hours >= 24) return `${Math.floor(hours / 24)}d`;
   if (hours >= 1) return `${hours}h`;
   return `${Math.max(1, Math.floor(diff / 60_000))}m`;
+}
+
+/* ─── Workspace switcher ──────────────────────────────────────────── */
+
+/**
+ * Tiny dropdown that lets the operator switch the dashboard's
+ * **active workspace**. The active workspace anchors every
+ * `safeJoin()` call (chat tools, fs API, exec API, scaffolding) so
+ * switching it instantly changes what the rest of the UI is looking
+ * at. The "+" button opens the new-workspace modal.
+ */
+function WorkspaceSwitcher({ runtime }: { runtime: RuntimeState | null }) {
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the menu on outside-click. Mirrors the StatusBar pattern of
+  // doing layout state inline rather than reaching for a popover lib.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const workspaces = runtime?.workspaces ?? [];
+  const activeId = runtime?.activeWorkspaceId ?? "";
+  const active = workspaces.find((w) => w.id === activeId);
+
+  const activate = useCallback(async (id: string) => {
+    try {
+      await fetch(`/api/runtime/workspaces/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activate: true }),
+      });
+    } catch {
+      /* ignore — SSE will reconcile or the next click retries */
+    }
+    setOpen(false);
+  }, []);
+
+  const create = useCallback(async () => {
+    const trimmed = name.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/runtime/workspaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed, activate: true }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || `failed (${res.status})`);
+      }
+      setName("");
+      setCreating(false);
+      setOpen(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, name]);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 rounded border border-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900"
+        title="Switch active workspace"
+      >
+        <span className="text-zinc-500">ws:</span>
+        <span className="text-zinc-100">{active?.name ?? "—"}</span>
+        <span className="text-zinc-600">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-40 mt-1 w-72 rounded border border-zinc-800 bg-zinc-950 p-1 text-[11px] shadow-lg">
+          <ul className="max-h-60 overflow-y-auto">
+            {workspaces.length === 0 && (
+              <li className="px-2 py-1 text-zinc-500">no workspaces</li>
+            )}
+            {workspaces.map((w) => (
+              <li key={w.id}>
+                <button
+                  type="button"
+                  onClick={() => activate(w.id)}
+                  className={
+                    "flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left hover:bg-zinc-900 " +
+                    (w.id === activeId ? "text-emerald-300" : "text-zinc-200")
+                  }
+                  title={w.root}
+                >
+                  <span className="truncate">{w.name}</span>
+                  <span className="truncate font-mono text-[9px] text-zinc-600">
+                    {w.id}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="border-t border-zinc-900 p-1">
+            {creating ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void create();
+                }}
+                className="flex flex-col gap-1"
+              >
+                <input
+                  autoFocus
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="workspace name"
+                  className="rounded border border-zinc-800 bg-black px-2 py-1 font-mono text-[11px] text-zinc-100 focus:border-emerald-700 focus:outline-none"
+                  disabled={busy}
+                  maxLength={64}
+                />
+                {error && (
+                  <p className="font-mono text-[10px] text-red-400">{error}</p>
+                )}
+                <div className="flex gap-1">
+                  <button
+                    type="submit"
+                    disabled={busy || !name.trim()}
+                    className="flex-1 rounded border border-emerald-700 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    create
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setCreating(false);
+                      setError(null);
+                      setName("");
+                    }}
+                    className="rounded border border-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-400 hover:bg-zinc-900"
+                  >
+                    cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCreating(true)}
+                className="w-full rounded px-2 py-1 text-left font-mono text-[10px] text-zinc-400 hover:bg-zinc-900"
+              >
+                + new workspace
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**

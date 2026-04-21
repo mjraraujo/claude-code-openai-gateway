@@ -264,13 +264,28 @@ export function KanbanPanel() {
     <aside className="flex h-full w-full flex-col gap-3 overflow-hidden border-r border-zinc-900 bg-black p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium text-zinc-200">Tasks &amp; Sprints</h2>
-        <button
-          type="button"
-          onClick={() => setShowAdd((v) => !v)}
-          className="rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
-        >
-          {showAdd ? "× cancel" : "+ New"}
-        </button>
+        <div className="flex items-center gap-1">
+          {/* Pop the board out into a dedicated tab — the standalone
+              `/board` route renders the same KanbanPanel without the
+              dashboard chrome. Same SSE state stream so card moves
+              stay in sync across all open tabs. */}
+          <a
+            href="/board"
+            target="_blank"
+            rel="noreferrer"
+            title="Open the board in its own browser tab"
+            className="rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
+          >
+            ↗ tab
+          </a>
+          <button
+            type="button"
+            onClick={() => setShowAdd((v) => !v)}
+            className="rounded border border-zinc-800 px-2 py-1 text-[11px] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
+          >
+            {showAdd ? "× cancel" : "+ New"}
+          </button>
+        </div>
       </div>
 
       {showAdd && (

@@ -69,8 +69,11 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ error: "missing_name" }, { status: 400 });
   }
   // Generate a slug-shaped id from the name so the URL/UI is
-  // human-readable. Falls back to `newId("W")` if the slug collides
-  // or contains nothing usable.
+  // human-readable. The trailing `||` fallback covers two cases:
+  //   - the name contained only non-[a-z0-9] characters (slug = "")
+  //   - the slug failed the id-shape regex
+  // Either way we fall back to a server-side random id so the
+  // workspace can still be created.
   const slug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

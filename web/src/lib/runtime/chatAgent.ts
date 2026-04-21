@@ -79,6 +79,10 @@ export type ChatAgentEvent =
   | { type: "error"; message: string };
 
 const DEFAULT_MAX_STEPS = 6;
+/** Hard upper bound on chat-agent loop iterations. Mirrored by the
+ * route-level cap in `app/api/runtime/chat/agent/route.ts` so callers
+ * can't exceed it via the request body. */
+export const CHAT_AGENT_MAX_STEPS = 12;
 const DEFAULT_MAX_WALL_MS = 60_000;
 /** Cap on the per-event preview text shown to the chat user. */
 const PREVIEW_CHARS = 600;
@@ -97,7 +101,7 @@ export async function* runChatAgent(
     yield { type: "error", message: "missing goal" };
     return;
   }
-  const maxSteps = Math.min(Math.max(1, opts.maxSteps ?? DEFAULT_MAX_STEPS), 12);
+  const maxSteps = Math.min(Math.max(1, opts.maxSteps ?? DEFAULT_MAX_STEPS), CHAT_AGENT_MAX_STEPS);
   const maxWallMs = Math.min(
     Math.max(5_000, opts.maxWallMs ?? DEFAULT_MAX_WALL_MS),
     300_000,

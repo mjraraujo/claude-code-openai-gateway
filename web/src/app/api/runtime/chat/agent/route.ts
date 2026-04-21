@@ -34,7 +34,7 @@ import {
   isValidPersona,
   type RufloPersona,
 } from "@/lib/runtime";
-import { runChatAgent, type ChatAgentEvent } from "@/lib/runtime/chatAgent";
+import { CHAT_AGENT_MAX_STEPS, runChatAgent, type ChatAgentEvent } from "@/lib/runtime/chatAgent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,7 +97,7 @@ export async function POST(req: Request): Promise<Response> {
 
   const maxSteps =
     typeof body.maxSteps === "number" && Number.isFinite(body.maxSteps)
-      ? Math.max(1, Math.min(12, Math.floor(body.maxSteps)))
+      ? Math.max(1, Math.min(CHAT_AGENT_MAX_STEPS, Math.floor(body.maxSteps)))
       : undefined;
 
   const encoder = new TextEncoder();
