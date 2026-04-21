@@ -10,7 +10,7 @@ import { KanbanPanel } from "./KanbanPanel";
 import { MobileShell } from "./MobileShell";
 import { SplitPane, clampSize } from "./SplitPane";
 import { StatusBar } from "./StatusBar";
-import { TerminalView } from "./TerminalView";
+import { TerminalTabs } from "./TerminalTabs";
 import { WorkspaceCenter } from "./WorkspaceCenter";
 
 /**
@@ -459,7 +459,7 @@ function TerminalPane({ onCollapse }: { onCollapse: () => void }) {
       >
         ▾
       </button>
-      <TerminalView />
+      <TerminalTabs />
     </div>
   );
 }
