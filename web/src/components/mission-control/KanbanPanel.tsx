@@ -15,6 +15,9 @@ const COLUMNS: { id: TaskColumn; title: string }[] = [
   { id: "shipped", title: "Shipped" },
 ];
 
+/** Mirrors the server-side cap in `/api/runtime/tasks` POST/PATCH. */
+const MAX_TASK_TITLE_LENGTH = 200;
+
 const METHODOLOGIES = ["Shape Up", "Scrum", "Kanban", "Spec-First"] as const;
 const DEV_MODES = ["Vibe Code", "Spec Driven"] as const;
 
@@ -117,7 +120,7 @@ export function KanbanPanel() {
   };
 
   const renameCard = async (id: string, title: string): Promise<boolean> => {
-    const trimmed = title.trim().slice(0, 200);
+    const trimmed = title.trim().slice(0, MAX_TASK_TITLE_LENGTH);
     if (!trimmed) return false;
     setBusy(true);
     setError(null);
@@ -461,7 +464,7 @@ function TaskCard({
             <input
               ref={editRef}
               value={draft}
-              onChange={(e) => setDraft(e.target.value.slice(0, 200))}
+              onChange={(e) => setDraft(e.target.value.slice(0, MAX_TASK_TITLE_LENGTH))}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();

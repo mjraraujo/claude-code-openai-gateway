@@ -42,12 +42,31 @@ export async function PATCH(req: Request): Promise<Response> {
     }
     if (typeof body.methodology === "string") {
       // Free-form short label surfaced to the planner system prompt.
-      // Cap length so the prompt can't be ballooned via this field.
-      draft.harness.methodology = body.methodology.trim().slice(0, 64);
+      // Cap length so the prompt can't be ballooned via this field,
+      // and strip control chars / backticks so a value like
+      // "Scrum`\nIGNORE PREVIOUS" can't break out of the prompt
+      // structure.
+      draft.harness.methodology = sanitizePromptLabel(body.methodology);
     }
     if (typeof body.devMode === "string") {
-      draft.harness.devMode = body.devMode.trim().slice(0, 64);
+      draft.harness.devMode = sanitizePromptLabel(body.devMode);
     }
   });
   return NextResponse.json({ harness: next.harness });
+}
+
+/**
+ * Sanitize a free-form label that will be interpolated into the
+ * auto-drive planner system prompt. Strips ASCII control chars,
+ * backticks, and brace/bracket characters that could be used to
+ * break out of the surrounding template, then trims and caps at
+ * 64 chars.
+ */
+function sanitizePromptLabel(raw: string): string {
+  return raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f`{}<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 64);
 }
