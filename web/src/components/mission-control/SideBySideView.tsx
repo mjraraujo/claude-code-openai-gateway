@@ -40,8 +40,8 @@ interface LaneResult {
 
 const DEFAULT_LANES: Lane[] = [
   {
-    id: "codex",
-    label: "Codex",
+    id: "claude-codex",
+    label: "claude-codex",
     model: "gpt-5.4",
     tint: "border-emerald-500/40",
   },

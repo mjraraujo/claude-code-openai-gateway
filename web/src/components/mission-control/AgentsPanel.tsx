@@ -11,7 +11,7 @@ import type {
 } from "@/lib/runtime";
 
 const MODELS = [
-  { id: "gpt-5.4", label: "gpt-5.4", route: "Codex backend" },
+  { id: "gpt-5.4", label: "gpt-5.4", route: "claude-codex backend" },
   { id: "gpt-4o", label: "gpt-4o", route: "OpenAI Chat Completions" },
   { id: "sonnet-4.6", label: "claude-sonnet-4.6", route: "Anthropic" },
   { id: "haiku-4.5", label: "claude-haiku-4.5", route: "Anthropic" },
@@ -141,7 +141,7 @@ export function AgentsPanel() {
                 <span className="text-xs text-zinc-200">{a.name}</span>
               </div>
               <span className="font-mono text-[10px] text-zinc-500">
-                {a.skill}
+                {a.skill && a.skill !== "—" ? a.skill : model}
               </span>
             </li>
           ))}
@@ -366,6 +366,7 @@ function AddDepartmentButton({ onCreated }: { onCreated: () => void }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -379,18 +380,31 @@ function AddDepartmentButton({ onCreated }: { onCreated: () => void }) {
       return;
     }
     setBusy(true);
+    setError(null);
     try {
-      await fetch("/api/runtime/departments", {
+      const res = await fetch("/api/runtime/departments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmed }),
       });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || `create failed (${res.status})`);
+      }
       setName("");
       setEditing(false);
       onCreated();
+    } catch (err) {
+      setError((err as Error).message);
     } finally {
       setBusy(false);
     }
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setName("");
+    setError(null);
   };
 
   if (!editing) {
@@ -405,19 +419,40 @@ function AddDepartmentButton({ onCreated }: { onCreated: () => void }) {
     );
   }
   return (
-    <div className="flex items-center gap-1">
-      <input
-        ref={inputRef}
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void submit();
-          if (e.key === "Escape") setEditing(false);
-        }}
-        disabled={busy}
-        placeholder="name"
-        className="w-24 rounded border border-zinc-800 bg-black px-1.5 py-0.5 text-[10px] text-zinc-200 focus:border-zinc-600 focus:outline-none"
-      />
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-1">
+        <input
+          ref={inputRef}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void submit();
+            if (e.key === "Escape") cancel();
+          }}
+          disabled={busy}
+          placeholder="name"
+          className="w-24 rounded border border-zinc-800 bg-black px-1.5 py-0.5 text-[10px] text-zinc-200 focus:border-zinc-600 focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={busy || !name.trim()}
+          className="rounded border border-emerald-700/60 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300 hover:border-emerald-600 disabled:opacity-50"
+        >
+          {busy ? "…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={cancel}
+          disabled={busy}
+          className="rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && (
+        <p className="font-mono text-[10px] text-red-400">{error}</p>
+      )}
     </div>
   );
 }

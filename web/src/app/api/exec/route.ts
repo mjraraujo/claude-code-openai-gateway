@@ -1,7 +1,38 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
 import { isSessionAuthenticated } from "@/lib/auth/session";
 import { WORKSPACE_ROOT } from "@/lib/fs/workspace";
+
+/**
+ * Pick a shell to invoke `command` with. We prefer `$SHELL` when the
+ * Node process inherits one (typical on macOS / Linux), then probe
+ * common bash / sh locations so the route still works in minimal
+ * containers that ship `/bin/sh` but no `/bin/bash`.
+ *
+ * Returning `null` lets the caller emit an actionable error instead
+ * of a bare `spawn bash ENOENT`.
+ */
+function resolveShell(): { cmd: string; loginFlag: string } | null {
+  const candidates: string[] = [];
+  const fromEnv = process.env.SHELL;
+  if (fromEnv && fromEnv.trim()) candidates.push(fromEnv.trim());
+  candidates.push(
+    "/bin/bash",
+    "/usr/bin/bash",
+    "/usr/local/bin/bash",
+    "/bin/sh",
+    "/usr/bin/sh",
+  );
+  for (const c of candidates) {
+    // Absolute paths must exist; bare names fall through to PATH lookup.
+    if (c.startsWith("/") && !existsSync(c)) continue;
+    // bash supports `-lc` (login + command); plain `sh` only supports `-c`.
+    const loginFlag = /(^|\/)bash$/.test(c) ? "-lc" : "-c";
+    return { cmd: c, loginFlag };
+  }
+  return null;
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -111,9 +142,20 @@ export async function POST(req: Request): Promise<Response> {
 
       send("start", { command, cwd });
 
-      // Run via `bash -lc` so users can use shell features (pipes,
-      // env vars, etc.) without us reimplementing parsing.
-      const child = spawn("bash", ["-lc", command], {
+      const shell = resolveShell();
+      if (!shell) {
+        send("error", {
+          message:
+            "no shell found — set $SHELL or install bash/sh in the server image",
+        });
+        send("exit", { code: 127, signal: null });
+        close();
+        return;
+      }
+
+      // Run via a login-capable shell so users can use shell features
+      // (pipes, env vars, etc.) without us reimplementing parsing.
+      const child = spawn(shell.cmd, [shell.loginFlag, command], {
         cwd,
         env: { ...process.env, FORCE_COLOR: "1", TERM: "xterm-256color" },
       });
@@ -151,7 +193,15 @@ export async function POST(req: Request): Promise<Response> {
       forward(child.stderr, "stderr");
 
       child.on("error", (err) => {
-        send("error", { message: err.message });
+        // Surface a clearer message for the most common spawn failure
+        // (missing shell binary in the host image) so the UI doesn't
+        // just show "spawn bash ENOENT".
+        const code = (err as NodeJS.ErrnoException).code;
+        const msg =
+          code === "ENOENT"
+            ? `shell not found: ${shell.cmd} — install it or set $SHELL`
+            : err.message;
+        send("error", { message: msg });
       });
 
       child.on("close", (code, signal) => {
