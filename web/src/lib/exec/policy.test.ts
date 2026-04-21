@@ -132,4 +132,42 @@ describe("policyFromEnv", () => {
     expect(p.allow).toEqual([]);
     expect(p.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
   });
+
+  it("falls back to the default timeout when the env value is non-numeric", () => {
+    const p = policyFromEnv({
+      MISSION_CONTROL_EXEC_TIMEOUT_MS: "not-a-number",
+    } as NodeJS.ProcessEnv);
+    expect(p.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
+  });
+
+  it("clamps an out-of-range env timeout into the allowed window", () => {
+    const tooHigh = policyFromEnv({
+      MISSION_CONTROL_EXEC_TIMEOUT_MS: String(MAX_TIMEOUT_MS * 10),
+    } as NodeJS.ProcessEnv);
+    expect(tooHigh.timeoutMs).toBe(MAX_TIMEOUT_MS);
+    const tooLow = policyFromEnv({
+      MISSION_CONTROL_EXEC_TIMEOUT_MS: "1",
+    } as NodeJS.ProcessEnv);
+    expect(tooLow.timeoutMs).toBe(MIN_TIMEOUT_MS);
+  });
+
+  it("ignores empty / whitespace-only entries inside CSV env vars", () => {
+    const p = policyFromEnv({
+      MISSION_CONTROL_EXEC_ALLOW: "git, , ,node",
+      MISSION_CONTROL_EXEC_DENY: ",,foo, ,",
+    } as NodeJS.ProcessEnv);
+    expect(p.allow).toEqual(["git", "node"]);
+    expect(p.deny).toContain("foo");
+    expect(p.deny).not.toContain("");
+    expect(p.deny).not.toContain(" ");
+  });
+
+  it("accepts a partial config (only one of the env vars set)", () => {
+    const onlyAllow = policyFromEnv({
+      MISSION_CONTROL_EXEC_ALLOW: "git",
+    } as NodeJS.ProcessEnv);
+    expect(onlyAllow.allow).toEqual(["git"]);
+    expect(onlyAllow.deny).toEqual(DEFAULT_DENY_PATTERNS);
+    expect(onlyAllow.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
+  });
 });

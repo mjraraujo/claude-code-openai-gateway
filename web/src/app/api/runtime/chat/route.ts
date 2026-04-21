@@ -18,6 +18,7 @@ import { NextResponse } from "next/server";
 
 import { isSessionAuthenticated } from "@/lib/auth/session";
 import { getOrCreateSessionApiKey, getValidToken } from "@/lib/auth/storage";
+import { isValidModelId } from "@/lib/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +31,6 @@ const MAX_MESSAGES = 64;
 const MAX_TOTAL_CHARS = 32_000;
 const MAX_PER_MESSAGE_CHARS = 16_000;
 const MAX_SYSTEM_CHARS = 8_000;
-const MODEL_RE = /^[\w.\-:/]{1,64}$/;
 const REQUEST_TIMEOUT_MS = 120_000;
 
 interface ChatMessage {
@@ -58,7 +58,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const model = typeof body.model === "string" ? body.model.trim() : "";
-  if (!model || !MODEL_RE.test(model)) {
+  if (!isValidModelId(model)) {
     return NextResponse.json({ error: "invalid_model" }, { status: 400 });
   }
 
