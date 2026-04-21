@@ -249,12 +249,12 @@ function ReauthModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/80 p-0 sm:items-center sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="reauth-title"
     >
-      <div className="w-full max-w-md rounded-lg border border-amber-500/40 bg-zinc-950 p-6 text-zinc-200">
+      <div className="flex h-full w-full max-w-full flex-col overflow-y-auto border-0 border-amber-500/40 bg-zinc-950 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] text-zinc-200 sm:h-auto sm:max-w-md sm:rounded-lg sm:border">
         <h3 id="reauth-title" className="text-base font-semibold text-amber-300">
           Re-authenticate
         </h3>

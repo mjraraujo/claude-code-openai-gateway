@@ -472,12 +472,12 @@ function AutoDriveConfirm({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/80 p-0 sm:items-center sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="autodrive-title"
     >
-      <div className="w-full max-w-md rounded-lg border border-red-500/40 bg-zinc-950 p-6">
+      <div className="flex h-full w-full max-w-full flex-col overflow-y-auto border-0 border-red-500/40 bg-zinc-950 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:h-auto sm:max-w-md sm:rounded-lg sm:border">
         <h3 id="autodrive-title" className="text-base font-semibold text-red-300">
           Engage Full Auto Drive?
         </h3>
@@ -554,11 +554,11 @@ function RunLogModal({
   }, [run?.steps.length]);
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/80 p-0 sm:items-center sm:p-6"
       role="dialog"
       aria-modal="true"
     >
-      <div className="flex h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-zinc-800 bg-zinc-950">
+      <div className="flex h-full w-full max-w-full flex-col border-0 border-zinc-800 bg-zinc-950 pb-[env(safe-area-inset-bottom)] sm:h-[80vh] sm:max-w-2xl sm:rounded-lg sm:border sm:pb-0">
         <div className="flex items-center justify-between border-b border-zinc-900 px-4 py-2.5">
           <div>
             <p className="text-sm text-zinc-200">Auto Drive · {run?.id}</p>
@@ -691,11 +691,11 @@ function DepartmentModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/80 p-0 sm:items-center sm:p-6"
       role="dialog"
       aria-modal="true"
     >
-      <div className="flex max-h-[85vh] w-full max-w-xl flex-col rounded-lg border border-zinc-800 bg-zinc-950">
+      <div className="flex h-full max-h-full w-full max-w-full flex-col border-0 border-zinc-800 bg-zinc-950 pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[85vh] sm:max-w-xl sm:rounded-lg sm:border sm:pb-0">
         <div className="flex items-center justify-between border-b border-zinc-900 px-4 py-2.5">
           <h3 className="text-sm text-zinc-200">{department.name} · cron</h3>
           <button
