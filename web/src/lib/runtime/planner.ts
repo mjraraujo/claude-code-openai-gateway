@@ -19,7 +19,7 @@ import { getValidToken, getOrCreateSessionApiKey } from "@/lib/auth/storage";
 import { consumeAnthropicStream } from "@/lib/gateway/anthropicStream";
 
 import { getGatewayUrl } from "./gateway";
-import type { AutoDriveStep } from "./store";
+import type { AutoDriveStep, RufloPersona } from "./store";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -48,6 +48,12 @@ export interface PlannerInput {
    */
   methodology?: string;
   devMode?: string;
+  /**
+   * Active ruflo persona ("core" / "impl" / "review"). Surfaced to
+   * the system prompt so the operator's choice changes how the
+   * planner biases reads vs. writes vs. exec calls.
+   */
+  persona?: RufloPersona;
 }
 
 export const DEFAULT_PLANNER_MODEL = "gpt-5.4";
@@ -85,10 +91,51 @@ Rules:
 - Keep commands fast (<30s). Output is truncated past 64 KB.
 - Prefer reading before writing. Prefer small, focused changes.`;
 
-/** Build the system prompt with optional methodology/dev-mode hints. */
+/**
+ * Per-persona system-prompt fragment. Pure helper, exported for tests
+ * and reused by {@link buildSystemPrompt}.
+ *
+ *   - **core**   — goal decomposition / planning bias; prefer
+ *     `read_file` and small probing `exec` calls before any
+ *     `write_file`.
+ *   - **impl**   — execution bias; minimal exploration, more
+ *     `write_file` / `exec`, and a hint that the step budget should
+ *     be spent making progress rather than re-reading.
+ *   - **review** — read-only by default; `write_file` is only
+ *     permitted when the goal explicitly mentions
+ *     fix / patch / apply.
+ */
+export function personaPrompt(persona: RufloPersona): string {
+  switch (persona) {
+    case "core":
+      return (
+        "Persona: ruflo · core — decompose the goal first. Prefer " +
+        "`read_file` and small probing `exec` calls to gather " +
+        "context before any `write_file`. Only write once you can " +
+        "name the exact change you intend to make."
+      );
+    case "impl":
+      return (
+        "Persona: ruflo · impl — execution bias. Minimise " +
+        "exploration. Prefer `write_file` / `exec` once you have " +
+        "enough context, and spend the step budget making progress " +
+        "rather than re-reading."
+      );
+    case "review":
+      return (
+        "Persona: ruflo · review — read-only by default. Use " +
+        "`read_file` and `exec` for inspection. Do NOT call " +
+        "`write_file` unless the goal explicitly mentions fix, " +
+        "patch, or apply — otherwise summarise findings via `done`."
+      );
+  }
+}
+
+/** Build the system prompt with optional methodology/dev-mode/persona hints. */
 export function buildSystemPrompt(input: {
   methodology?: string;
   devMode?: string;
+  persona?: RufloPersona;
 }): string {
   const extras: string[] = [];
   if (input.methodology && input.methodology.trim()) {
@@ -96,6 +143,9 @@ export function buildSystemPrompt(input: {
   }
   if (input.devMode && input.devMode.trim()) {
     extras.push(`Dev mode: ${input.devMode.trim()} — adjust caution and review depth accordingly.`);
+  }
+  if (input.persona) {
+    extras.push(personaPrompt(input.persona));
   }
   if (extras.length === 0) return BASE_SYSTEM_PROMPT;
   return `${BASE_SYSTEM_PROMPT}\n\n${extras.join("\n")}`;
@@ -106,6 +156,7 @@ async function livePlan(input: PlannerInput): Promise<Plan> {
   const system = buildSystemPrompt({
     methodology: input.methodology,
     devMode: input.devMode,
+    persona: input.persona,
   });
 
   const ctrl = new AbortController();

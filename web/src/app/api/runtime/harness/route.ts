@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { isSessionAuthenticated } from "@/lib/auth/session";
-import { getStore, isValidModelId, type HarnessState } from "@/lib/runtime";
+import {
+  getStore,
+  isValidModelId,
+  isValidPersona,
+  type HarnessState,
+} from "@/lib/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +55,13 @@ export async function PATCH(req: Request): Promise<Response> {
     }
     if (typeof body.devMode === "string") {
       draft.harness.devMode = sanitizePromptLabel(body.devMode);
+    }
+    if (body.persona !== undefined) {
+      // Closed enum — silently drop unknown values rather than 400ing
+      // so the field stays forward-compatible with future personas.
+      if (isValidPersona(body.persona)) {
+        draft.harness.persona = body.persona;
+      }
     }
   });
   return NextResponse.json({ harness: next.harness });

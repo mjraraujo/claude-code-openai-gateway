@@ -15,7 +15,7 @@ vi.mock("@/lib/auth/storage", () => ({
   getOrCreateSessionApiKey: async () => "sk-test",
 }));
 
-import { plan, extractJsonObject, buildSystemPrompt } from "./planner";
+import { plan, extractJsonObject, buildSystemPrompt, personaPrompt } from "./planner";
 import type { AutoDriveStep } from "./store";
 
 beforeEach(() => {
@@ -150,5 +150,34 @@ describe("planner · buildSystemPrompt", () => {
     const got = buildSystemPrompt({ methodology: "   ", devMode: "" });
     expect(got).not.toMatch(/Methodology:/);
     expect(got).not.toMatch(/Dev mode:/);
+  });
+
+  it("appends a persona fragment when provided", () => {
+    const got = buildSystemPrompt({ persona: "review" });
+    expect(got).toMatch(/Persona: ruflo · review/);
+    expect(got).toMatch(/read-only/);
+  });
+});
+
+describe("planner · personaPrompt", () => {
+  it("biases core toward reads before writes", () => {
+    const got = personaPrompt("core");
+    expect(got).toMatch(/ruflo · core/);
+    expect(got).toMatch(/read_file/);
+    expect(got).toMatch(/before any `write_file`/);
+  });
+
+  it("biases impl toward execution", () => {
+    const got = personaPrompt("impl");
+    expect(got).toMatch(/ruflo · impl/);
+    expect(got).toMatch(/write_file/);
+    expect(got).toMatch(/Minimise exploration/);
+  });
+
+  it("locks review to read-only by default", () => {
+    const got = personaPrompt("review");
+    expect(got).toMatch(/ruflo · review/);
+    expect(got).toMatch(/read-only/);
+    expect(got).toMatch(/fix, patch, or apply/);
   });
 });

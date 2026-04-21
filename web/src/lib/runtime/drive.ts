@@ -18,6 +18,7 @@ import {
   AutoDriveStepKind,
   getStore,
   newId,
+  personaAgentId,
   RuntimeState,
 } from "./store";
 
@@ -120,7 +121,7 @@ export async function startAutoDrive(opts: StartOptions): Promise<AutoDriveRun> 
 
   await getStore().update((draft) => {
     draft.autoDrive.current = run;
-    setAgentStatus(draft, "ruflo-core", "active", "drive.plan");
+    setAgentStatus(draft, personaAgentId(draft.harness.persona), "active", "drive.plan");
     setAgentStatus(draft, "harness", "active", "supervise");
   });
 
@@ -207,6 +208,7 @@ async function runLoop(a: ActiveLoop): Promise<void> {
           model: a.options.model,
           methodology: live.harness.methodology,
           devMode: live.harness.devMode,
+          persona: live.harness.persona,
         });
       } catch (err) {
         await appendStep(a.runId, "error", `planner error: ${(err as Error).message}`);
