@@ -17,6 +17,14 @@
 # ─── Stage 1: build the web dashboard ───────────────────────────────
 FROM node:20-alpine AS web-builder
 
+# `node-pty` is an `optionalDependencies` of web/. Its native binding
+# only compiles when the toolchain is present — without these
+# packages `npm ci` skips it and the runtime image has no PTY support.
+# We install build-base + python3 + bash here so the binding is
+# compiled once at build time and the resulting `node_modules/node-pty`
+# is copied into the standalone output by Next.js's tracer.
+RUN apk add --no-cache python3 make g++ bash
+
 WORKDIR /app/web
 
 # Copy lockfile + manifest first to maximise layer cache hits.

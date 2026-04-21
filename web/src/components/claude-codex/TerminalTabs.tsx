@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import dynamic from "next/dynamic";
 
 import { TerminalView } from "./TerminalView";
 import {
@@ -11,14 +12,32 @@ import {
   renameTab,
   selectTab,
   type TabsState,
+  type TerminalTabKind,
 } from "./terminalTabs";
 
+// xterm.js touches `window`/`document` on import, so the Claude PTY
+// view is loaded client-side only. `next/dynamic({ ssr: false })`
+// keeps the bundle out of the server build.
+const ClaudeTerminalView = dynamic(() => import("./ClaudeTerminalView"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center bg-black text-[11px] text-zinc-500">
+      loading interactive terminal…
+    </div>
+  ),
+});
+
 /**
- * Multi-terminal dock. Renders a tab strip + N independent
- * `<TerminalView/>` instances. Each tab keeps its TerminalView
- * mounted (hidden via CSS rather than unmounted) so a long-running
- * `npm test` in one shell doesn't get cancelled when the operator
- * peeks at another shell's history.
+ * Multi-terminal dock. Renders a tab strip + N independent terminal
+ * panes. Each tab keeps its view mounted (hidden via CSS rather than
+ * unmounted) so a long-running `npm test` in one shell doesn't get
+ * cancelled when the operator peeks at another shell's history, and
+ * the Claude PTY scrollback survives tab switches.
+ *
+ * Tab 0 defaults to an interactive `claude-codex` PTY (powered by
+ * `node-pty` + xterm.js, served via `/api/pty/*`). The "+" button
+ * adds a non-interactive shell tab; "+ claude" adds another
+ * interactive tab.
  *
  * Pure tab-state lives in `terminalTabs.ts`; this component just
  * wires those helpers into `useState` and renders the chrome.
@@ -27,7 +46,11 @@ export function TerminalTabs() {
   const [state, setState] = useState<TabsState>(initialTabsState);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const onAdd = useCallback(() => setState((s) => addTab(s)), []);
+  const onAdd = useCallback(
+    (kind: TerminalTabKind = "shell") =>
+      setState((s) => addTab(s, kind)),
+    [],
+  );
   const onClose = useCallback(
     (id: string) => setState((s) => closeTab(s, id)),
     [],
@@ -63,6 +86,14 @@ export function TerminalTabs() {
                   : "text-zinc-500 hover:bg-zinc-950 hover:text-zinc-300")
               }
             >
+              <span
+                aria-hidden
+                title={t.kind === "claude" ? "claude-codex PTY" : "shell"}
+                className={
+                  "h-1.5 w-1.5 shrink-0 rounded-full " +
+                  (t.kind === "claude" ? "bg-cyan-400" : "bg-emerald-500")
+                }
+              />
               {isEditing ? (
                 <input
                   autoFocus
@@ -114,13 +145,31 @@ export function TerminalTabs() {
         })}
         <button
           type="button"
-          onClick={onAdd}
+          onClick={() => onAdd("claude")}
           disabled={atCap}
-          aria-label="New terminal"
-          title={atCap ? `Limit of ${MAX_TERMINALS} terminals reached` : "New terminal"}
-          className="ml-1 shrink-0 rounded-md px-2 py-0.5 text-[11px] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="New claude terminal"
+          title={
+            atCap
+              ? `Limit of ${MAX_TERMINALS} terminals reached`
+              : "New interactive claude terminal"
+          }
+          className="ml-1 shrink-0 rounded-md px-2 py-0.5 text-[11px] text-cyan-400 hover:bg-zinc-900 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          +
+          + claude
+        </button>
+        <button
+          type="button"
+          onClick={() => onAdd("shell")}
+          disabled={atCap}
+          aria-label="New shell"
+          title={
+            atCap
+              ? `Limit of ${MAX_TERMINALS} terminals reached`
+              : "New shell tab"
+          }
+          className="shrink-0 rounded-md px-2 py-0.5 text-[11px] text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          + shell
         </button>
       </div>
 
@@ -132,7 +181,11 @@ export function TerminalTabs() {
               "absolute inset-0 " + (t.id === state.activeId ? "" : "hidden")
             }
           >
-            <TerminalView />
+            {t.kind === "claude" ? (
+              <ClaudeTerminalView kind="claude" />
+            ) : (
+              <TerminalView />
+            )}
           </div>
         ))}
       </div>

@@ -12,7 +12,20 @@ export interface TerminalTab {
   id: string;
   /** Human label shown in the tab strip. Editable via renameTab(). */
   label: string;
+  /**
+   * Which view to render for this tab.
+   *   - "claude": interactive xterm.js + node-pty session running the
+   *     bundled `claude-codex` CLI (or whatever `CLAUDE_CODEX_PTY_BIN`
+   *     points at). Default for the first tab.
+   *   - "shell": the existing non-interactive `bash -lc` SSE shell.
+   *
+   * Persisted in tab state so the tab strip can render an icon and so
+   * a re-render of `TerminalTabs` mounts the right component.
+   */
+  kind: TerminalTabKind;
 }
+
+export type TerminalTabKind = "claude" | "shell";
 
 export interface TabsState {
   tabs: TerminalTab[];
@@ -36,21 +49,31 @@ function newTabId(): string {
 }
 
 export function initialTabsState(): TabsState {
-  const first: TerminalTab = { id: newTabId(), label: "Shell 1" };
+  // Tab 0 defaults to the interactive Claude PTY so opening the
+  // dashboard drops the operator straight into `claude-codex`. The
+  // "+ shell" button still creates plain bash tabs.
+  const first: TerminalTab = {
+    id: newTabId(),
+    label: "claude",
+    kind: "claude",
+  };
   return { tabs: [first], activeId: first.id, nextLabelN: 2 };
 }
 
-/** Add a new tab (capped at MAX_TERMINALS) and focus it. */
-export function addTab(state: TabsState): TabsState {
+/** Add a new tab (capped at MAX_TERMINALS) and focus it. Defaults to a shell tab. */
+export function addTab(state: TabsState, kind: TerminalTabKind = "shell"): TabsState {
   if (state.tabs.length >= MAX_TERMINALS) return state;
   const tab: TerminalTab = {
     id: newTabId(),
-    label: `Shell ${state.nextLabelN}`,
+    label: kind === "claude" ? "claude" : `Shell ${state.nextLabelN}`,
+    kind,
   };
   return {
     tabs: [...state.tabs, tab],
     activeId: tab.id,
-    nextLabelN: state.nextLabelN + 1,
+    // Only bump the shell counter so the labels stay sequential
+    // even after a "+ claude" insertion.
+    nextLabelN: kind === "shell" ? state.nextLabelN + 1 : state.nextLabelN,
   };
 }
 
