@@ -42,6 +42,31 @@ const DEFAULTS = {
   maxBytes: 1 * 1024 * 1024,
 };
 
+/**
+ * Circuit-breaker configuration for the auto-drive loop. The planner
+ * occasionally gets stuck either (a) re-emitting the same tool call
+ * repeatedly without making progress (the "infinite jump"), or
+ * (b) producing tool calls that all fail. Both modes burn the step
+ * and byte budgets without ever finishing, so we trip a breaker that
+ * terminates the run with a clear reason instead of waiting for the
+ * outer guardrails.
+ *
+ * Defaults are intentionally conservative: a real plan that legitimately
+ * needs to retry the same tool 2-3 times will not trip, but a planner
+ * stuck in a loop is caught well before the 12-step default.
+ */
+export interface CircuitBreakerConfig {
+  /** Trip after this many consecutive identical plan signatures. */
+  maxRepeatedPlans: number;
+  /** Trip after this many consecutive failed tool_result steps. */
+  maxConsecutiveFailures: number;
+}
+
+export const DEFAULT_BREAKER: CircuitBreakerConfig = {
+  maxRepeatedPlans: 3,
+  maxConsecutiveFailures: 4,
+};
+
 interface ActiveLoop {
   runId: string;
   abort: AbortController;
@@ -190,7 +215,24 @@ async function runLoop(a: ActiveLoop): Promise<void> {
       if (a.abort.signal.aborted) return;
 
       stepIndex++;
-      await appendStep(a.runId, "plan", p.thought, { tool: p.action.tool });
+      await appendStep(a.runId, "plan", p.thought, {
+        tool: p.action.tool,
+        sig: planSignature(p.action),
+      });
+
+      // Circuit-breaker: catch the planner repeating itself before
+      // we burn another tool execution on the same call.
+      {
+        const after = await getStore().snapshot();
+        const cur = after.autoDrive.current;
+        if (cur && cur.id === a.runId) {
+          const verdict = detectCircuitBreaker(cur.steps);
+          if (verdict.tripped) {
+            await appendStep(a.runId, "error", verdict.reason);
+            return await terminate(a.runId, "error", verdict.reason);
+          }
+        }
+      }
 
       // 2. Execute
       if (p.action.tool === "done") {
@@ -213,6 +255,21 @@ async function runLoop(a: ActiveLoop): Promise<void> {
         ok: result.ok,
         bytes: (result.output ?? "").length,
       });
+
+      // Circuit-breaker: catch a streak of failing tool calls so we
+      // don't keep retrying a broken command until the step budget
+      // is exhausted.
+      {
+        const after = await getStore().snapshot();
+        const cur = after.autoDrive.current;
+        if (cur && cur.id === a.runId) {
+          const verdict = detectCircuitBreaker(cur.steps);
+          if (verdict.tripped) {
+            await appendStep(a.runId, "error", verdict.reason);
+            return await terminate(a.runId, "error", verdict.reason);
+          }
+        }
+      }
     }
   } catch (err) {
     await terminate(a.runId, "error", (err as Error).message);
@@ -335,4 +392,91 @@ function clampInt(
 ): number {
   if (typeof raw !== "number" || !Number.isFinite(raw)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(raw)));
+}
+
+/**
+ * Stable string fingerprint of a planner action, used by the circuit
+ * breaker to detect "infinite jumps" where the planner keeps emitting
+ * the same call. Includes the tool name and the operative arguments
+ * (path / command / content hash / summary). Whitespace in commands
+ * is normalised so trivially-different reformattings still collapse.
+ */
+export function planSignature(action: PlanAction): string {
+  switch (action.tool) {
+    case "read_file":
+      return `read_file::${action.path}`;
+    case "write_file":
+      // Don't fingerprint the full content (large files would blow
+      // up the comparison) — length + first/last 64 bytes is enough
+      // to distinguish "same plan" from "different plan" in practice.
+      return `write_file::${action.path}::${action.content.length}::${
+        action.content.slice(0, 64)
+      }::${action.content.slice(-64)}`;
+    case "exec":
+      return `exec::${action.command.replace(/\s+/g, " ").trim()}`;
+    case "done":
+      return `done::${action.summary.trim()}`;
+  }
+}
+
+export type BreakerVerdict =
+  | { tripped: false }
+  | { tripped: true; reason: string };
+
+/**
+ * Pure circuit-breaker check. Inspects the tail of the step history
+ * and returns whether the loop should be terminated. Two trip
+ * conditions:
+ *
+ *   1. The last `maxRepeatedPlans` plan steps all share the same
+ *      `planSignature` — the planner is stuck repeating itself.
+ *   2. The last `maxConsecutiveFailures` `tool_result` steps all have
+ *      `data.ok === false` — every tool call is failing.
+ *
+ * Both checks ignore `info` / `error` housekeeping steps so a stray
+ * info log doesn't reset the failure streak.
+ */
+export function detectCircuitBreaker(
+  steps: AutoDriveStep[],
+  cfg: CircuitBreakerConfig = DEFAULT_BREAKER,
+): BreakerVerdict {
+  const repeatN = Math.max(2, cfg.maxRepeatedPlans);
+  const failN = Math.max(2, cfg.maxConsecutiveFailures);
+
+  // (1) Repeated-plan check.
+  const planSigs: string[] = [];
+  for (let i = steps.length - 1; i >= 0 && planSigs.length < repeatN; i--) {
+    const s = steps[i];
+    if (s.kind !== "plan") continue;
+    const sig = typeof s.data?.sig === "string"
+      ? s.data.sig
+      // Fallback for plan steps that pre-date the breaker: combine
+      // tool name + (capped) thought text so the check still works
+      // on historical runs loaded from disk without producing
+      // arbitrarily long signature strings.
+      : `${typeof s.data?.tool === "string" ? s.data.tool : "plan"}::${s.text.trim().slice(0, 100)}`;
+    planSigs.push(sig);
+  }
+  if (planSigs.length >= repeatN && planSigs.every((s) => s === planSigs[0])) {
+    return {
+      tripped: true,
+      reason: `circuit breaker: ${repeatN} consecutive identical plans`,
+    };
+  }
+
+  // (2) Consecutive-failure check.
+  const results: boolean[] = [];
+  for (let i = steps.length - 1; i >= 0 && results.length < failN; i--) {
+    const s = steps[i];
+    if (s.kind !== "tool_result") continue;
+    results.push(s.data?.ok === true);
+  }
+  if (results.length >= failN && results.every((ok) => ok === false)) {
+    return {
+      tripped: true,
+      reason: `circuit breaker: ${failN} consecutive tool failures`,
+    };
+  }
+
+  return { tripped: false };
 }
