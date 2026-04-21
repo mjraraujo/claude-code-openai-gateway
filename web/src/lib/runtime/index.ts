@@ -9,7 +9,7 @@ import { startCronOnce } from "./cron";
 
 startCronOnce();
 
-export { getStore, newId } from "./store";
+export { getStore, isValidModelId, newId } from "./store";
 export type {
   AgentState,
   AgentStatus,

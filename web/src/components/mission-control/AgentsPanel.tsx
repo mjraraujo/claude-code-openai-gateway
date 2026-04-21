@@ -3,19 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
+  AgentState,
   AutoDriveRun,
   CronJob,
   Department,
   HarnessState,
   RuntimeState,
 } from "@/lib/runtime";
+import { DEFAULT_MODEL_ID, MODEL_PRESETS, findPreset } from "@/lib/runtime/models";
 
-const MODELS = [
-  { id: "gpt-5.4", label: "gpt-5.4", route: "claude-codex backend" },
-  { id: "gpt-4o", label: "gpt-4o", route: "OpenAI Chat Completions" },
-  { id: "sonnet-4.6", label: "claude-sonnet-4.6", route: "Anthropic" },
-  { id: "haiku-4.5", label: "claude-haiku-4.5", route: "Anthropic" },
-] as const;
+// Shared list also consumed by ChatDock and the Settings drawer.
+const MODELS = MODEL_PRESETS;
 
 const STATUS_COLORS = {
   active: "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]",
@@ -23,13 +21,23 @@ const STATUS_COLORS = {
   blocked: "bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.7)]",
 } as const;
 
+/** Sentinel value for the "All departments" filter option. */
+const ALL_DEPARTMENTS = "__all__";
+/** Sentinel value for "no department assigned" in the filter dropdown. */
+const NO_DEPARTMENT = "__none__";
+
 export function AgentsPanel() {
   const [state, setState] = useState<RuntimeState | null>(null);
   const [showAutoDriveModal, setShowAutoDriveModal] = useState(false);
   const [showRunLog, setShowRunLog] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState<Department | null>(null);
+  const [editingAgent, setEditingAgent] = useState<AgentState | null>(null);
+  const [showAddAgent, setShowAddAgent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [departmentFilter, setDepartmentFilter] = useState<string>(
+    ALL_DEPARTMENTS,
+  );
 
   // Subscribe to runtime state via SSE.
   useEffect(() => {
@@ -55,9 +63,28 @@ export function AgentsPanel() {
   // Model is sourced from persisted harness so Kanban "▶ run" and the
   // Engage modal both pick up whichever value was last selected here,
   // and the value survives reloads.
-  const model = harness?.model ?? "gpt-5.4";
-  const knownModel = MODELS.find((m) => m.id === model);
+  const model = harness?.model ?? DEFAULT_MODEL_ID;
+  const knownModel = findPreset(model);
   const modelRoute = knownModel?.route ?? "custom route";
+
+  // The set of distinct department ids referenced by agents — drives
+  // the filter dropdown together with the formal `state.departments`.
+  // Using a Set + sort keeps the order stable across renders.
+  const agentDepartments = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of agents) {
+      if (a.department) set.add(a.department);
+    }
+    return Array.from(set).sort();
+  }, [agents]);
+
+  const visibleAgents = useMemo(() => {
+    if (departmentFilter === ALL_DEPARTMENTS) return agents;
+    if (departmentFilter === NO_DEPARTMENT) {
+      return agents.filter((a) => !a.department);
+    }
+    return agents.filter((a) => a.department === departmentFilter);
+  }, [agents, departmentFilter]);
 
   const patchHarness = useCallback(
     async (patch: Partial<HarnessState>) => {
@@ -75,6 +102,26 @@ export function AgentsPanel() {
     },
     [],
   );
+
+  const deleteAgent = useCallback(async (id: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/runtime/agents", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || `delete failed (${res.status})`);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   const onAutoDriveClick = () => {
     if (currentRun) {
@@ -121,30 +168,102 @@ export function AgentsPanel() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
-          active agents
-        </span>
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
+            active agents
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAddAgent(true)}
+            className="rounded border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+          >
+            + Add
+          </button>
+        </div>
+        {(agentDepartments.length > 0 || departments.length > 0) && (
+          <select
+            value={departmentFilter}
+            onChange={(e) => setDepartmentFilter(e.target.value)}
+            className="rounded border border-zinc-800 bg-black px-2 py-1 text-[10px] text-zinc-300"
+            aria-label="Filter agents by department"
+          >
+            <option value={ALL_DEPARTMENTS}>All departments</option>
+            <option value={NO_DEPARTMENT}>(no department)</option>
+            {/* Show departments referenced by agents first; then any
+                formal departments from `state.departments` that aren't
+                already represented by an agent. Avoids duplicates. */}
+            {agentDepartments.map((d) => (
+              <option key={`agent-${d}`} value={d}>
+                {d}
+              </option>
+            ))}
+            {departments
+              .filter((d) => !agentDepartments.includes(d.name))
+              .map((d) => (
+                <option key={d.id} value={d.name}>
+                  {d.name}
+                </option>
+            ))}
+          </select>
+        )}
         <ul className="space-y-1.5">
-          {agents.map((a) => (
-            <li
-              key={a.id}
-              className="flex items-center justify-between rounded-md border border-zinc-900 bg-zinc-950/60 px-2.5 py-2"
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  aria-hidden
-                  className={
-                    "inline-block h-1.5 w-1.5 rounded-full " +
-                    STATUS_COLORS[a.status]
-                  }
-                />
-                <span className="text-xs text-zinc-200">{a.name}</span>
-              </div>
-              <span className="font-mono text-[10px] text-zinc-500">
-                {a.skill && a.skill !== "—" ? a.skill : model}
-              </span>
+          {visibleAgents.map((a) => {
+            const effectiveModel = a.model || model;
+            const overridden = !!a.model && a.model !== model;
+            return (
+              <li
+                key={a.id}
+                className="rounded-md border border-zinc-900 bg-zinc-950/60 px-2.5 py-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      aria-hidden
+                      className={
+                        "inline-block h-1.5 w-1.5 rounded-full " +
+                        STATUS_COLORS[a.status]
+                      }
+                    />
+                    <span className="truncate text-xs text-zinc-200">
+                      {a.name}
+                    </span>
+                    {a.department && (
+                      <span className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-zinc-400">
+                        {a.department}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <span
+                      title={overridden ? "per-agent model override" : "global model"}
+                      className={
+                        "font-mono text-[10px] " +
+                        (overridden ? "text-emerald-400" : "text-zinc-500")
+                      }
+                    >
+                      {a.skill && a.skill !== "—" ? a.skill : effectiveModel}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEditingAgent(a)}
+                      title="Edit agent"
+                      aria-label={`Edit ${a.name}`}
+                      className="rounded border border-zinc-900 px-1 text-[10px] text-zinc-600 hover:border-zinc-800 hover:text-zinc-300"
+                    >
+                      ✎
+                    </button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+          {visibleAgents.length === 0 && (
+            <li className="rounded-md border border-dashed border-zinc-900 px-2 py-3 text-center text-[10px] text-zinc-600">
+              {agents.length === 0
+                ? "no agents — click + Add"
+                : "no agents in this department"}
             </li>
-          ))}
+          )}
         </ul>
       </section>
 
@@ -276,6 +395,41 @@ export function AgentsPanel() {
             departments.find((d) => d.id === showDeptModal.id) ?? showDeptModal
           }
           onClose={() => setShowDeptModal(null)}
+          onError={setError}
+        />
+      )}
+
+      {showAddAgent && (
+        <AgentEditorModal
+          mode="create"
+          allDepartments={[
+            ...new Set([
+              ...agentDepartments,
+              ...departments.map((d) => d.name),
+            ]),
+          ].sort()}
+          globalModel={model}
+          onClose={() => setShowAddAgent(false)}
+          onError={setError}
+        />
+      )}
+
+      {editingAgent && (
+        <AgentEditorModal
+          mode="edit"
+          agent={editingAgent}
+          allDepartments={[
+            ...new Set([
+              ...agentDepartments,
+              ...departments.map((d) => d.name),
+            ]),
+          ].sort()}
+          globalModel={model}
+          onClose={() => setEditingAgent(null)}
+          onDelete={async () => {
+            await deleteAgent(editingAgent.id);
+            setEditingAgent(null);
+          }}
           onError={setError}
         />
       )}
@@ -817,4 +971,206 @@ function fmtRelative(t: number): string {
   if (diff < 60 * 60_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 24 * 60 * 60_000) return `${Math.floor(diff / 3_600_000)}h ago`;
   return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
+/**
+ * Modal that handles both creating a new agent and editing an
+ * existing one. Lets the operator set name + department + skill +
+ * an optional per-agent model override (which falls back to the
+ * global harness model when blank).
+ */
+function AgentEditorModal({
+  mode,
+  agent,
+  allDepartments,
+  globalModel,
+  onClose,
+  onDelete,
+  onError,
+}: {
+  mode: "create" | "edit";
+  agent?: AgentState;
+  allDepartments: string[];
+  globalModel: string;
+  onClose: () => void;
+  onDelete?: () => Promise<void> | void;
+  onError: (e: string | null) => void;
+}) {
+  const [name, setName] = useState(agent?.name ?? "");
+  const [department, setDepartment] = useState(agent?.department ?? "");
+  const [skill, setSkill] = useState(
+    agent?.skill && agent.skill !== "—" ? agent.skill : "",
+  );
+  const [modelOverride, setModelOverride] = useState(agent?.model ?? "");
+  const [busy, setBusy] = useState(false);
+  const ready = name.trim().length > 0;
+
+  const submit = async () => {
+    if (!ready) return;
+    setBusy(true);
+    onError(null);
+    const payload: Record<string, unknown> = {
+      name: name.trim(),
+      department: department.trim(),
+      skill: skill.trim(),
+    };
+    // For edits, an empty string means "clear the override". The API
+    // accepts `null` as an explicit clear; the empty string here is
+    // serialised to `""` which the route also treats as clear.
+    if (mode === "edit") {
+      payload.id = agent!.id;
+      payload.model = modelOverride.trim() ? modelOverride.trim() : null;
+    } else if (modelOverride.trim()) {
+      payload.model = modelOverride.trim();
+    }
+    try {
+      const res = await fetch("/api/runtime/agents", {
+        method: mode === "create" ? "POST" : "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || `${mode} failed (${res.status})`);
+      }
+      onClose();
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!onDelete) return;
+    if (typeof window !== "undefined") {
+      const ok = window.confirm(
+        `Delete agent "${agent?.name}"? This cannot be undone.`,
+      );
+      if (!ok) return;
+    }
+    setBusy(true);
+    try {
+      await onDelete();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/80 p-0 sm:items-center sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="agent-editor-title"
+    >
+      <div className="flex h-full w-full max-w-full flex-col overflow-y-auto border-0 border-zinc-800 bg-zinc-950 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:h-auto sm:max-w-md sm:rounded-lg sm:border">
+        <h3 id="agent-editor-title" className="text-base font-semibold text-zinc-100">
+          {mode === "create" ? "Add agent" : `Edit ${agent?.name}`}
+        </h3>
+        <div className="mt-4 space-y-3">
+          <Field label="name">
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={60}
+              className="mt-1 w-full rounded border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            />
+          </Field>
+          <Field label="department (optional)">
+            <input
+              value={department}
+              onChange={(e) => setDepartment(e.target.value)}
+              maxLength={40}
+              list="agent-editor-departments"
+              placeholder="e.g. engineering"
+              className="mt-1 w-full rounded border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            />
+            {allDepartments.length > 0 && (
+              <datalist id="agent-editor-departments">
+                {allDepartments.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+            )}
+          </Field>
+          <Field label="skill (optional)">
+            <input
+              value={skill}
+              onChange={(e) => setSkill(e.target.value)}
+              maxLength={60}
+              placeholder="e.g. planner"
+              className="mt-1 w-full rounded border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            />
+          </Field>
+          <Field
+            label={`model override (blank = use global "${globalModel}")`}
+          >
+            <select
+              value={modelOverride}
+              onChange={(e) => setModelOverride(e.target.value)}
+              className="mt-1 w-full rounded border border-zinc-800 bg-black px-2 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            >
+              <option value="">(use global)</option>
+              {/* Render the persisted override even if it's not in
+                  the preset list, so the dropdown reflects state for
+                  custom model ids set via the API. */}
+              {modelOverride && !findPreset(modelOverride) && (
+                <option value={modelOverride}>{modelOverride} (custom)</option>
+              )}
+              {MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="mt-6 flex items-center justify-between gap-2">
+          {mode === "edit" && onDelete ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleDelete()}
+              className="rounded border border-red-900/60 px-2 py-1 text-[10px] text-red-400 hover:border-red-700 hover:bg-red-500/10 disabled:opacity-50"
+            >
+              delete
+            </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="rounded-md border border-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:border-zinc-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={!ready || busy}
+              className="rounded-md border border-emerald-700/60 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:border-emerald-600 disabled:opacity-50"
+            >
+              {busy ? "…" : mode === "create" ? "Add" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block text-xs">
+      <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
 }

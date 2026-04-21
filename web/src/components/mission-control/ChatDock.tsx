@@ -30,6 +30,7 @@ import {
 } from "react";
 
 import type { RuntimeState } from "@/lib/runtime";
+import { DEFAULT_MODEL_ID as DEFAULT_MODEL } from "@/lib/runtime/models";
 
 interface ChatTurn {
   id: number;
@@ -41,7 +42,6 @@ interface ChatTurn {
 }
 
 const MAX_TURNS = 200;
-const DEFAULT_MODEL = "gpt-5.4";
 
 export function ChatDock() {
   const [turns, setTurns] = useState<ChatTurn[]>([
