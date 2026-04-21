@@ -1,4 +1,4 @@
-# Fly.io config for the Mission Control container.
+# Fly.io config for the Claude Codex container.
 #
 # The image is built from the repository's multi-stage Dockerfile and runs
 # both the Next.js dashboard (port 3000) and the gateway proxy (port 18923)
@@ -50,7 +50,7 @@ primary_region = "iad"
 #     fly volumes create codex_gateway_state --region iad --size 1 -a app-damp-cloud-3494
 #
 # This persists the gateway token cache (~/.codex-gateway/token.json) and
-# Mission Control state (~/.codex-gateway/mission-control.json) across deploys.
+# Claude Codex state (~/.codex-gateway/claude-codex.json) across deploys.
 [mounts]
   source = "codex_gateway_state"
   destination = "/root/.codex-gateway"

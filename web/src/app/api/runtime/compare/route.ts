@@ -28,12 +28,13 @@ import { isSessionAuthenticated } from "@/lib/auth/session";
 import { getOrCreateSessionApiKey, getValidToken } from "@/lib/auth/storage";
 import { consumeAnthropicStream } from "@/lib/gateway/anthropicStream";
 import { isValidModelId } from "@/lib/runtime";
+import { readEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const GATEWAY_URL =
-  process.env.MISSION_CONTROL_GATEWAY_URL ??
+  readEnv("CLAUDE_CODEX_GATEWAY_URL", "MISSION_CONTROL_GATEWAY_URL") ??
   "http://127.0.0.1:18923/v1/messages";
 
 const MAX_LANES = 4;
@@ -108,7 +109,7 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json(
       {
         error: "no_token",
-        message: "sign in via Mission Control to compare models",
+        message: "sign in via Claude Codex to compare models",
       },
       { status: 401 },
     );

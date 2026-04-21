@@ -14,10 +14,10 @@ import type { MetadataRoute } from "next";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Mission Control — Claude Code Gateway",
-    short_name: "Mission Control",
+    name: "Claude Codex — Gateway Dashboard",
+    short_name: "Claude Codex",
     description:
-      "Web dashboard for the claude-code-openai-gateway proxy: tasks, terminal, workspace, and agent runtime.",
+      "Web dashboard for the claude-codex gateway: tasks, terminal, workspace, and agent runtime that drives the official Claude Code CLI.",
     start_url: "/",
     scope: "/",
     display: "standalone",

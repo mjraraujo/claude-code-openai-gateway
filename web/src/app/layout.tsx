@@ -2,13 +2,13 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Mission Control — Claude Code Gateway",
+  title: "Claude Codex — Gateway Dashboard",
   description:
-    "Web-based Mission Control dashboard for the claude-code-openai-gateway proxy.",
-  applicationName: "Mission Control",
+    "Web dashboard for the claude-codex gateway: tasks, terminal, workspace, and agent runtime that drives the official Claude Code CLI.",
+  applicationName: "Claude Codex",
   appleWebApp: {
     capable: true,
-    title: "Mission Control",
+    title: "Claude Codex",
     // Match the dashboard chrome so the iOS status bar blends in when
     // the page is added to the home screen.
     statusBarStyle: "black-translucent",

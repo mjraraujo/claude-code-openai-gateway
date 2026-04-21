@@ -3,7 +3,7 @@
 /**
  * ChatDock — streaming chat with the local gateway.
  *
- * Lives in the right column of Mission Control as one of two tabs
+ * Lives in the right column of Claude Codex as one of two tabs
  * (the other being the existing Agents panel). Posts the conversation
  * to `POST /api/runtime/chat` which forwards it to `bin/gateway.js`
  * (Anthropic Messages-shaped, always streams SSE) and pipes the
@@ -248,7 +248,15 @@ export function ChatDock() {
           <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
             chat · gateway
           </span>
-          <span className="text-xs text-zinc-300">model: {model}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-300">model: {model}</span>
+            <span
+              title="All chat traffic flows through the local claude-codex gateway on :18923 — Anthropic Messages in, ChatGPT Codex out."
+              className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-emerald-300"
+            >
+              via claude-codex
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-2 text-[10px]">
           {sending ? (
@@ -313,7 +321,7 @@ export function ChatDock() {
 function buildSystemPrompt(workspaceRoot: string | null): string {
   const root = workspaceRoot ?? "(unknown)";
   return [
-    "You are an assistant embedded in the Mission Control dashboard for the claude-code-openai-gateway repository.",
+    "You are an assistant embedded in the Claude Codex dashboard for the claude-code-openai-gateway repository.",
     `Current workspace root: ${root}.`,
     "Be concise. Prefer code blocks for code. If asked to modify files or run commands, describe the change — execution is not yet wired through this surface.",
   ].join(" ");

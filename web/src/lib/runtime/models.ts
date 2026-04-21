@@ -25,10 +25,20 @@ export interface ModelPreset {
 }
 
 export const MODEL_PRESETS: readonly ModelPreset[] = [
-  { id: "gpt-5.4", label: "gpt-5.4", route: "claude-codex backend" },
-  { id: "gpt-4o", label: "gpt-4o", route: "OpenAI Chat Completions" },
-  { id: "sonnet-4.6", label: "claude-sonnet-4.6", route: "Anthropic" },
-  { id: "haiku-4.5", label: "claude-haiku-4.5", route: "Anthropic" },
+  // Default — what the gateway forwards to the ChatGPT Codex backend
+  // unless an override is requested. Matches `bin/gateway.js`'s
+  // `default_model` so the dropdown reflects what actually runs.
+  { id: "gpt-5.4", label: "gpt-5.4 (default)", route: "claude-codex → ChatGPT Codex" },
+  { id: "gpt-5.1-codex", label: "gpt-5.1-codex", route: "claude-codex → ChatGPT Codex" },
+  { id: "gpt-5-mini", label: "gpt-5 mini", route: "claude-codex → ChatGPT Codex" },
+  { id: "gpt-4o", label: "gpt-4o", route: "claude-codex → ChatGPT Codex" },
+  // The Anthropic-labelled entries are passed through to the Codex
+  // backend by `bin/gateway.js` (which always re-targets to OpenAI),
+  // so today they share the same route. Kept separate so the picker
+  // surfaces the canonical Anthropic model names a user may type.
+  { id: "claude-opus-4.5", label: "claude-opus-4.5", route: "claude-codex (proxied)" },
+  { id: "claude-sonnet-4.6", label: "claude-sonnet-4.6", route: "claude-codex (proxied)" },
+  { id: "claude-haiku-4.5", label: "claude-haiku-4.5", route: "claude-codex (proxied)" },
 ] as const;
 
 export const DEFAULT_MODEL_ID: string = MODEL_PRESETS[0].id;

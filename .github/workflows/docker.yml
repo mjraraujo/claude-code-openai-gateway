@@ -1,6 +1,6 @@
 name: Publish container image
 
-# Builds the Mission Control Docker image and publishes it to the
+# Builds the Claude Codex Docker image and publishes it to the
 # GitHub Container Registry (ghcr.io/<owner>/<repo>) on every push to
 # main and on any pushed semver tag (v*.*.*). Pull requests build the
 # image to validate the Dockerfile but do not push.

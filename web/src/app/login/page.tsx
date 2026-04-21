@@ -99,7 +99,7 @@ export default function LoginPage() {
             className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.7)]"
           />
           <span className="font-mono text-xs uppercase tracking-[0.2em] text-zinc-500">
-            mission control
+            claude codex
           </span>
         </div>
 
@@ -160,7 +160,7 @@ export default function LoginPage() {
               <div className="flex items-center gap-2 pt-2 text-xs text-zinc-500">
                 <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
                 {phase === "completing"
-                  ? "Authenticated — opening Mission Control…"
+                  ? "Authenticated — opening Claude Codex…"
                   : "Waiting for browser sign-in…"}
               </div>
             </div>

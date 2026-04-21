@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# Mission Control container.
+# Claude Codex container.
 #
 # Two-stage image:
 #   1. `web-builder`  — installs `web/` deps and runs `next build`
@@ -9,7 +9,10 @@
 #   2. final          — Node 20 runtime serving both the Next.js app
 #                       (port 3000) and the gateway proxy (port 18923)
 #                       via a tiny shell entrypoint that forwards
-#                       signals to both children.
+#                       signals to both children. The official
+#                       `@anthropic-ai/claude-code` CLI is preinstalled
+#                       so the bundled `claude-codex` wrapper can exec
+#                       into it without operator setup.
 
 # ─── Stage 1: build the web dashboard ───────────────────────────────
 FROM node:20-alpine AS web-builder
@@ -26,7 +29,7 @@ RUN npm run build
 # ─── Stage 2: runtime ───────────────────────────────────────────────
 FROM node:20-alpine AS runtime
 
-# Toolchain baked into the image so the Mission Control terminal +
+# Toolchain baked into the image so the Claude Codex terminal +
 # chat-driven exec route have a useful surface out of the box. We
 # deliberately do NOT enable `apk` / `apt` at runtime — the chat
 # would need root, which is a security and image-size problem; this
@@ -51,9 +54,31 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
+# Install the official Anthropic Claude Code CLI globally so the
+# `claude-codex` wrapper has something to exec into. Without this
+# step the wrapper falls back to printing an "install with: npm i -g
+# @anthropic-ai/claude-code" hint, defeating the purpose of bundling
+# everything in one container image.
+#
+# Pinned by major to keep the image reproducible while still picking
+# up patch-level fixes when the image is rebuilt. Override at build
+# time with `--build-arg CLAUDE_CODE_VERSION=x.y.z` if needed.
+ARG CLAUDE_CODE_VERSION=latest
+RUN npm install -g --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && claude --version || true
+
 # Gateway entrypoint (no runtime npm deps — it uses node built-ins).
 COPY bin/ ./bin/
 COPY package.json ./
+
+# Expose the gateway as `claude-codex` (wrapper that runs the official
+# Claude CLI through the proxy with a dummy ANTHROPIC_API_KEY) *and*
+# `claude-codex-gateway` (the proxy server itself). Both are the same
+# script — the second name is just a clearer alias for users running
+# the headless `--serve` mode outside Docker.
+RUN ln -sf /app/bin/gateway.js /usr/local/bin/claude-codex \
+    && ln -sf /app/bin/gateway.js /usr/local/bin/claude-codex-gateway \
+    && chmod +x /app/bin/gateway.js
 
 # Next.js standalone output bundles its own minimal node_modules.
 COPY --from=web-builder /app/web/.next/standalone ./web/
@@ -70,7 +95,8 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
 ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
-    MISSION_CONTROL_GATEWAY_URL=http://127.0.0.1:18923/v1/chat/completions
+    CLAUDE_CODEX_GATEWAY_URL=http://127.0.0.1:18923/v1/messages \
+    MISSION_CONTROL_GATEWAY_URL=http://127.0.0.1:18923/v1/messages
 
 EXPOSE 3000 18923
 

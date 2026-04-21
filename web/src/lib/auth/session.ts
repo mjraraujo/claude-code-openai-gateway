@@ -1,5 +1,5 @@
 /**
- * Cookie-based session for the Mission Control dashboard.
+ * Cookie-based session for the Claude Codex dashboard.
  *
  * The session value is the dummy `sk-ant-…` API key generated and
  * cached by `getOrCreateSessionApiKey()`. The browser presenting a
@@ -11,6 +11,8 @@
  */
 
 import { cookies, headers } from "next/headers";
+
+import { envFlag } from "@/lib/env";
 
 import { SESSION_COOKIE_NAME } from "./constants";
 import { getSessionApiKey } from "./storage";
@@ -42,14 +44,14 @@ interface SetSessionOptions {
  * Two explicit overrides remain, for setups where the auto-detection
  * is wrong:
  *
- *  - `MISSION_CONTROL_FORCE_SECURE_COOKIES=1` → always `Secure`.
- *  - `MISSION_CONTROL_INSECURE_COOKIES=1` → never `Secure`.
+ *  - `CLAUDE_CODEX_FORCE_SECURE_COOKIES=1` (alias `MISSION_CONTROL_FORCE_SECURE_COOKIES=1`) → always `Secure`.
+ *  - `CLAUDE_CODEX_INSECURE_COOKIES=1` (alias `MISSION_CONTROL_INSECURE_COOKIES=1`) → never `Secure`.
  *
  * Exported for testing.
  */
 export function shouldUseSecureCookie(requestProto?: string): boolean {
-  if (process.env.MISSION_CONTROL_FORCE_SECURE_COOKIES === "1") return true;
-  if (process.env.MISSION_CONTROL_INSECURE_COOKIES === "1") return false;
+  if (envFlag("CLAUDE_CODEX_FORCE_SECURE_COOKIES", "MISSION_CONTROL_FORCE_SECURE_COOKIES")) return true;
+  if (envFlag("CLAUDE_CODEX_INSECURE_COOKIES", "MISSION_CONTROL_INSECURE_COOKIES")) return false;
   if (requestProto) {
     return requestProto.toLowerCase() === "https";
   }

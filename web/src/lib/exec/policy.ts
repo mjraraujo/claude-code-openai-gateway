@@ -144,20 +144,22 @@ export function evaluate(command: string, policy: ExecPolicy): PolicyVerdict {
  * operators tighten the route in production without redeploying
  * the UI:
  *
- *   - `MISSION_CONTROL_EXEC_DENY`   — comma-separated extra deny patterns
- *   - `MISSION_CONTROL_EXEC_ALLOW`  — comma-separated allow patterns
- *   - `MISSION_CONTROL_EXEC_TIMEOUT_MS` — numeric override
+ *   - `CLAUDE_CODEX_EXEC_DENY` (alias `MISSION_CONTROL_EXEC_DENY`)   — comma-separated extra deny patterns
+ *   - `CLAUDE_CODEX_EXEC_ALLOW` (alias `MISSION_CONTROL_EXEC_ALLOW`)  — comma-separated allow patterns
+ *   - `CLAUDE_CODEX_EXEC_TIMEOUT_MS` (alias `MISSION_CONTROL_EXEC_TIMEOUT_MS`) — numeric override
  *
  * Returns the same `ExecPolicy` shape the route uses internally,
  * with the defaults applied.
  */
 export function policyFromEnv(env: NodeJS.ProcessEnv = process.env): ExecPolicy {
+  const denyRaw = env.CLAUDE_CODEX_EXEC_DENY ?? env.MISSION_CONTROL_EXEC_DENY;
+  const allowRaw = env.CLAUDE_CODEX_EXEC_ALLOW ?? env.MISSION_CONTROL_EXEC_ALLOW;
+  const timeoutRaw =
+    env.CLAUDE_CODEX_EXEC_TIMEOUT_MS ?? env.MISSION_CONTROL_EXEC_TIMEOUT_MS;
   return buildPolicy({
-    deny: splitCsv(env.MISSION_CONTROL_EXEC_DENY),
-    allow: splitCsv(env.MISSION_CONTROL_EXEC_ALLOW),
-    timeoutMs: env.MISSION_CONTROL_EXEC_TIMEOUT_MS
-      ? Number(env.MISSION_CONTROL_EXEC_TIMEOUT_MS)
-      : undefined,
+    deny: splitCsv(denyRaw),
+    allow: splitCsv(allowRaw),
+    timeoutMs: timeoutRaw ? Number(timeoutRaw) : undefined,
   });
 }
 

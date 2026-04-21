@@ -9,7 +9,7 @@ import { startCronOnce } from "./cron";
 
 startCronOnce();
 
-export { getStore, isValidModelId, newId } from "./store";
+export { getStore, isValidModelId, newId, normalizeSubtasks, MAX_SUBTASK_TITLE_LENGTH, MAX_SUBTASKS_PER_TASK } from "./store";
 export type {
   AgentState,
   AgentStatus,
@@ -20,8 +20,9 @@ export type {
   Department,
   HarnessState,
   RuntimeState,
+  SubTask,
   Task,
   TaskColumn,
 } from "./store";
-export { startAutoDrive, stopAutoDrive } from "./drive";
+export { startAutoDrive, stopAutoDrive, forceClearAutoDrive } from "./drive";
 export { parseSchedule } from "./cron";

@@ -3,7 +3,7 @@
 /**
  * Hand-rolled resizable split-pane primitive.
  *
- * Used by the Mission Control desktop shell to allow the user to
+ * Used by the Claude Codex desktop shell to allow the user to
  * resize the left Kanban rail, the right Agents/Chat rail, and the
  * vertical split between Workspace (top) and Terminal (bottom).
  *

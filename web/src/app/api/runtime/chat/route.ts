@@ -20,18 +20,19 @@ import { isSessionAuthenticated } from "@/lib/auth/session";
 import { getOrCreateSessionApiKey, getValidToken } from "@/lib/auth/storage";
 import { isValidModelId } from "@/lib/runtime";
 
+import { readEnv } from "@/lib/env";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const GATEWAY_URL =
-  process.env.MISSION_CONTROL_GATEWAY_URL ??
+  readEnv("CLAUDE_CODEX_GATEWAY_URL", "MISSION_CONTROL_GATEWAY_URL") ??
   "http://127.0.0.1:18923/v1/messages";
-
-const MAX_MESSAGES = 64;
 const MAX_TOTAL_CHARS = 32_000;
 const MAX_PER_MESSAGE_CHARS = 16_000;
 const MAX_SYSTEM_CHARS = 8_000;
 const REQUEST_TIMEOUT_MS = 120_000;
+const MAX_MESSAGES = 64;
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -79,7 +80,7 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json(
       {
         error: "no_token",
-        message: "sign in via Mission Control to chat",
+        message: "sign in via Claude Codex to chat",
       },
       { status: 401 },
     );

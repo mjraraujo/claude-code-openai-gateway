@@ -22,7 +22,15 @@ export function TerminalView() {
     {
       id: 0,
       kind: "info",
-      text: "Mission Control · streaming shell. Commands run via bash -lc in the gateway repo. ⌘K to clear.",
+      text: "Claude Codex · streaming shell. Commands run via bash -lc in the gateway repo. ⌘K to clear.",
+    },
+    {
+      id: 1,
+      kind: "info",
+      // Surface the most common footgun up-front: re-running the
+      // gateway from inside this terminal will EADDRINUSE because the
+      // container's entrypoint already serves it on :18923.
+      text: "Note: the claude-codex gateway is already running on 127.0.0.1:18923. Don't re-launch bin/gateway.js — use it via the claude-codex wrapper instead.",
     },
   ]);
   const [running, setRunning] = useState(false);
@@ -30,7 +38,7 @@ export function TerminalView() {
   const [history, setHistory] = useState<string[]>([]);
   const [historyCursor, setHistoryCursor] = useState<number | null>(null);
 
-  const lineId = useRef(1);
+  const lineId = useRef(2);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -200,7 +208,7 @@ export function TerminalView() {
     <div className="flex h-full flex-col bg-black font-mono text-[12px] leading-5 text-zinc-200">
       <div className="flex items-center justify-between border-b border-zinc-900 px-4 py-2">
         <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-          mission control · gateway shell
+          claude codex · gateway shell
         </span>
         <span className="flex items-center gap-2 text-[10px]">
           {running ? (
@@ -315,7 +323,23 @@ function handleSseBlock(
       if (typeof payload.chunk === "string") appendChunk("stdout", payload.chunk);
       break;
     case "stderr":
-      if (typeof payload.chunk === "string") appendChunk("stderr", payload.chunk);
+      if (typeof payload.chunk === "string") {
+        appendChunk("stderr", payload.chunk);
+        // Friendly hint when the most common footgun crops up — a
+        // user re-launches `bin/gateway.js` and Node aborts because
+        // the entrypoint already owns :18923. We pattern-match on
+        // the stderr text rather than the exit event because
+        // EADDRINUSE crashes via an unhandled 'error' event.
+        if (
+          payload.chunk.includes("EADDRINUSE") &&
+          payload.chunk.includes("18923")
+        ) {
+          append(
+            "info",
+            "↑ The claude-codex gateway is already running on :18923 (started by the container entrypoint). Don't start a second instance — use the `claude-codex` wrapper to talk to it.",
+          );
+        }
+      }
       break;
     case "info":
       if (typeof payload.message === "string") append("info", payload.message);
