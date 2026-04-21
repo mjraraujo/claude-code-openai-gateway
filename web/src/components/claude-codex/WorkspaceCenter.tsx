@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 
 import { BrowserView } from "./BrowserView";
 import { SideBySideView } from "./SideBySideView";
-import { TerminalView } from "./TerminalView";
+import { TerminalTabs } from "./TerminalTabs";
 import { WorkspaceView } from "./WorkspaceView";
 
 type Tab = "terminal" | "workspace" | "side-by-side" | "browser";
@@ -80,7 +80,7 @@ export function WorkspaceCenter({ hideTerminal = false }: WorkspaceCenterProps) 
       <div className="relative flex-1 overflow-hidden">
         {!hideTerminal && visited.has("terminal") && (
           <div className={tab === "terminal" ? "h-full" : "hidden"}>
-            <TerminalView />
+            <TerminalTabs />
           </div>
         )}
         {visited.has("workspace") && (

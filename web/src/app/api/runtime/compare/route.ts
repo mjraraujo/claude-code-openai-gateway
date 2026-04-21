@@ -28,14 +28,10 @@ import { isSessionAuthenticated } from "@/lib/auth/session";
 import { getOrCreateSessionApiKey, getValidToken } from "@/lib/auth/storage";
 import { consumeAnthropicStream } from "@/lib/gateway/anthropicStream";
 import { isValidModelId } from "@/lib/runtime";
-import { readEnv } from "@/lib/env";
+import { getGatewayUrl } from "@/lib/runtime/gateway";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const GATEWAY_URL =
-  readEnv("CLAUDE_CODEX_GATEWAY_URL", "MISSION_CONTROL_GATEWAY_URL") ??
-  "http://127.0.0.1:18923/v1/messages";
 
 const MAX_LANES = 4;
 const MAX_PROMPT_CHARS = 4000;
@@ -168,7 +164,7 @@ async function runLane(
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   const t0 = Date.now();
   try {
-    const res = await fetch(GATEWAY_URL, {
+    const res = await fetch(getGatewayUrl(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -8,7 +8,9 @@ import type {
   CronJob,
   Department,
   HarnessState,
+  RufloPersona,
   RuntimeState,
+  WebhookConfig,
 } from "@/lib/runtime";
 import { DEFAULT_MODEL_ID, MODEL_PRESETS, findPreset } from "@/lib/runtime/models";
 
@@ -287,7 +289,23 @@ export function AgentsPanel() {
             checked={harness?.persistContext ?? false}
             onChange={(v) => patchHarness({ persistContext: v })}
           />
+          <PersonaSelect
+            persona={harness?.persona ?? "core"}
+            disabled={!harness}
+            onChange={(p) => patchHarness({ persona: p })}
+          />
         </div>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
+          webhook
+        </span>
+        <WebhookSection
+          config={harness?.webhook ?? null}
+          disabled={!harness}
+          onError={(msg) => setError(msg)}
+        />
       </section>
 
       <section className="flex flex-col gap-2">
@@ -1212,5 +1230,226 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       </span>
       {children}
     </label>
+  );
+}
+
+const PERSONA_LABELS: Record<RufloPersona, { label: string; hint: string }> = {
+  core: { label: "core", hint: "decompose · read first" },
+  impl: { label: "impl", hint: "execute · write fast" },
+  review: { label: "review", hint: "read-only by default" },
+};
+
+function PersonaSelect({
+  persona,
+  disabled,
+  onChange,
+}: {
+  persona: RufloPersona;
+  disabled: boolean;
+  onChange: (next: RufloPersona) => void;
+}) {
+  const options: RufloPersona[] = ["core", "impl", "review"];
+  return (
+    <div className="flex items-center justify-between gap-2 py-0.5">
+      <span>Ruflo persona</span>
+      <div
+        role="radiogroup"
+        aria-label="Ruflo persona"
+        className="flex overflow-hidden rounded border border-zinc-800 bg-zinc-950"
+      >
+        {options.map((p) => {
+          const selected = p === persona;
+          return (
+            <button
+              key={p}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              disabled={disabled}
+              onClick={() => onChange(p)}
+              title={PERSONA_LABELS[p].hint}
+              className={
+                "px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition disabled:opacity-50 " +
+                (selected
+                  ? "bg-emerald-500/20 text-emerald-200"
+                  : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200")
+              }
+            >
+              {PERSONA_LABELS[p].label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WebhookSection({
+  config,
+  disabled,
+  onError,
+}: {
+  config: WebhookConfig | null;
+  disabled: boolean;
+  onError: (msg: string) => void;
+}) {
+  // Local edit buffer so the user can type without each keystroke
+  // round-tripping through the API. We push on Save / toggle.
+  const [url, setUrl] = useState(config?.url ?? "");
+  const [secret, setSecret] = useState(config?.secret ?? "");
+  const [busy, setBusy] = useState(false);
+  const [testStatus, setTestStatus] = useState<string | null>(null);
+  // Sync local buffer when the persisted config changes externally
+  // (e.g. SSE update from another tab).
+  useEffect(() => {
+    setUrl(config?.url ?? "");
+    setSecret(config?.secret ?? "");
+  }, [config?.url, config?.secret]);
+
+  const enabled = config?.enabled ?? false;
+  const hasConfig = !!config;
+
+  const patch = useCallback(
+    async (next: Partial<WebhookConfig> | null) => {
+      setBusy(true);
+      onError("");
+      try {
+        const res = await fetch("/api/runtime/webhook", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ webhook: next }),
+        });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(j.error || `webhook failed (${res.status})`);
+        }
+      } catch (err) {
+        onError((err as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [onError],
+  );
+
+  const save = () => {
+    void patch({
+      url,
+      secret: secret || undefined,
+      enabled: enabled || !hasConfig,
+    });
+  };
+
+  const toggle = () => {
+    if (!url) return;
+    void patch({ url, secret: secret || undefined, enabled: !enabled });
+  };
+
+  const clear = () => {
+    setUrl("");
+    setSecret("");
+    setTestStatus(null);
+    void patch(null);
+  };
+
+  const sendTest = async () => {
+    setBusy(true);
+    setTestStatus(null);
+    onError("");
+    try {
+      const res = await fetch("/api/runtime/webhook/test", { method: "POST" });
+      const j = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        status?: number;
+        error?: string;
+      };
+      if (!res.ok || j.ok === false) {
+        setTestStatus(`fail · ${j.error ?? `${j.status ?? res.status}`}`);
+      } else {
+        setTestStatus(`ok · ${j.status ?? "200"}`);
+      }
+    } catch (err) {
+      setTestStatus(`fail · ${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border border-zinc-900 bg-zinc-950/60 p-2.5 text-xs text-zinc-300">
+      <Field label="URL">
+        <input
+          type="url"
+          inputMode="url"
+          placeholder="https://example.com/hooks/codex"
+          value={url}
+          disabled={disabled || busy}
+          onChange={(e) => setUrl(e.target.value)}
+          className="mt-1 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[11px] text-zinc-200 outline-none focus:border-zinc-700"
+        />
+      </Field>
+      <Field label="Secret (optional, HMAC-SHA256)">
+        <input
+          type="password"
+          autoComplete="off"
+          value={secret}
+          disabled={disabled || busy}
+          onChange={(e) => setSecret(e.target.value)}
+          className="mt-1 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[11px] text-zinc-200 outline-none focus:border-zinc-700"
+        />
+      </Field>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={save}
+          disabled={disabled || busy || !url}
+          className="rounded border border-zinc-800 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-300 hover:border-zinc-700 disabled:opacity-40"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          onClick={toggle}
+          disabled={disabled || busy || !hasConfig}
+          aria-pressed={enabled}
+          className={
+            "rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition disabled:opacity-40 " +
+            (enabled
+              ? "border-emerald-700/60 bg-emerald-500/10 text-emerald-200"
+              : "border-zinc-800 text-zinc-400 hover:border-zinc-700")
+          }
+        >
+          {enabled ? "Enabled" : "Disabled"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void sendTest()}
+          disabled={disabled || busy || !hasConfig || !enabled}
+          className="rounded border border-zinc-800 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-300 hover:border-zinc-700 disabled:opacity-40"
+        >
+          Send test
+        </button>
+        {hasConfig && (
+          <button
+            type="button"
+            onClick={clear}
+            disabled={disabled || busy}
+            className="ml-auto rounded border border-zinc-900 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500 hover:border-red-900/60 hover:text-red-300 disabled:opacity-40"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {testStatus && (
+        <p
+          className={
+            "font-mono text-[10px] " +
+            (testStatus.startsWith("ok") ? "text-emerald-400" : "text-red-400")
+          }
+        >
+          {testStatus}
+        </p>
+      )}
+    </div>
   );
 }

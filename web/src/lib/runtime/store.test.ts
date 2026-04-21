@@ -252,3 +252,82 @@ describe("runtime store · normalizeSubtasks", () => {
     expect(normalizeSubtasks([{ id: "", title: "" }])).toBeUndefined();
   });
 });
+
+describe("runtime store · persona + webhook defaults", () => {
+  it("seeds persona='core' and webhook=null", async () => {
+    const { getStore } = await importStore();
+    const snap = await getStore().snapshot();
+    expect(snap.harness.persona).toBe("core");
+    expect(snap.harness.webhook).toBeNull();
+  });
+
+  it("clamps an unknown persona on disk back to 'core'", async () => {
+    const dir = path.join(tmpDir, ".codex-gateway");
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fs.writeFile(
+      path.join(dir, "claude-codex.json"),
+      JSON.stringify({ harness: { persona: "evil-persona" } }),
+    );
+    const { getStore } = await importStore();
+    const snap = await getStore().snapshot();
+    expect(snap.harness.persona).toBe("core");
+  });
+
+  it("preserves a valid persona and a valid webhook on reload", async () => {
+    const dir = path.join(tmpDir, ".codex-gateway");
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fs.writeFile(
+      path.join(dir, "claude-codex.json"),
+      JSON.stringify({
+        harness: {
+          persona: "review",
+          webhook: {
+            url: "https://example.com/hook",
+            secret: "shh",
+            enabled: true,
+          },
+        },
+      }),
+    );
+    const { getStore } = await importStore();
+    const snap = await getStore().snapshot();
+    expect(snap.harness.persona).toBe("review");
+    expect(snap.harness.webhook?.url).toContain("example.com");
+    expect(snap.harness.webhook?.enabled).toBe(true);
+    expect(snap.harness.webhook?.secret).toBe("shh");
+  });
+
+  it("drops a webhook with an invalid URL on reload", async () => {
+    const dir = path.join(tmpDir, ".codex-gateway");
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fs.writeFile(
+      path.join(dir, "claude-codex.json"),
+      JSON.stringify({
+        harness: { webhook: { url: "ftp://nope", enabled: true } },
+      }),
+    );
+    const { getStore } = await importStore();
+    const snap = await getStore().snapshot();
+    expect(snap.harness.webhook).toBeNull();
+  });
+});
+
+describe("runtime store · isValidPersona / personaAgentId", () => {
+  it("only accepts the three closed-set values", async () => {
+    const { isValidPersona } = await importStore();
+    expect(isValidPersona("core")).toBe(true);
+    expect(isValidPersona("impl")).toBe(true);
+    expect(isValidPersona("review")).toBe(true);
+    expect(isValidPersona("CORE")).toBe(false);
+    expect(isValidPersona("")).toBe(false);
+    expect(isValidPersona(null)).toBe(false);
+    expect(isValidPersona(undefined)).toBe(false);
+  });
+
+  it("maps each persona to the corresponding seeded agent row", async () => {
+    const { personaAgentId } = await importStore();
+    expect(personaAgentId("core")).toBe("ruflo-core");
+    expect(personaAgentId("impl")).toBe("ruflo-impl");
+    expect(personaAgentId("review")).toBe("ruflo-review");
+  });
+});
