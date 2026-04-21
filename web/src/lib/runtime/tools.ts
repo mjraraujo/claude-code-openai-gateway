@@ -252,3 +252,34 @@ function sanitizeRelArg(raw: string | undefined): string | null {
   const cleaned = raw.replace(/[^A-Za-z0-9_./:=@\-]/g, "").trim();
   return cleaned || null;
 }
+
+/**
+ * Three Amigos AI BDD validation. Wrapper around `runAmigos()` so
+ * the same code path is shared between the dashboard "▶ Run" button
+ * and any future planner action that needs to gate the SDLC `bdd`
+ * stage on a static review verdict. Returns a one-line summary as
+ * `output` so the auto-drive transcript stays compact.
+ */
+export async function runAmigosTool(
+  target: { type: "all" } | { type: "feature"; path: string },
+  model: string,
+): Promise<ToolResult> {
+  const { runAmigos, overallVerdict } = await import("./amigos");
+  try {
+    const report = await runAmigos({ scope: target, model });
+    if (report.error) {
+      return { ok: false, error: report.error, meta: { report } };
+    }
+    const verdict = overallVerdict(report);
+    const summary = `amigos ${verdict}: ${report.pass}/${report.scanned} pass, ${report.concerns} concerns, ${report.fail} fail`;
+    return {
+      // A "concerns" verdict is still a successful run — gating is
+      // up to the caller (e.g. the SDLC planner action).
+      ok: verdict !== "fail",
+      output: summary,
+      meta: { report, verdict },
+    };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}

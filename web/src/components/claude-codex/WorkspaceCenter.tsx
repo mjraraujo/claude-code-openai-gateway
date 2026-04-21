@@ -2,18 +2,20 @@
 
 import { useCallback, useState } from "react";
 
+import { AmigosPanel } from "./AmigosPanel";
 import { BrowserView } from "./BrowserView";
 import { SideBySideView } from "./SideBySideView";
 import { TerminalTabs } from "./TerminalTabs";
 import { WorkspaceView } from "./WorkspaceView";
 
-type Tab = "terminal" | "workspace" | "side-by-side" | "browser";
+type Tab = "terminal" | "workspace" | "side-by-side" | "browser" | "amigos";
 
 const ALL_TABS: { id: Tab; label: string }[] = [
   { id: "terminal", label: "Terminal" },
   { id: "workspace", label: "Workspace" },
   { id: "side-by-side", label: "Side-by-Side" },
   { id: "browser", label: "Browser" },
+  { id: "amigos", label: "Amigos" },
 ];
 
 export interface WorkspaceCenterProps {
@@ -96,6 +98,11 @@ export function WorkspaceCenter({ hideTerminal = false }: WorkspaceCenterProps) 
         {visited.has("browser") && (
           <div className={tab === "browser" ? "h-full" : "hidden"}>
             <BrowserView />
+          </div>
+        )}
+        {visited.has("amigos") && (
+          <div className={tab === "amigos" ? "h-full" : "hidden"}>
+            <AmigosPanel />
           </div>
         )}
       </div>

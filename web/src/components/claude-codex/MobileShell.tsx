@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { AgentsPanel } from "./AgentsPanel";
+import { AmigosPanel } from "./AmigosPanel";
 import { KanbanPanel } from "./KanbanPanel";
 import { StatusBar } from "./StatusBar";
 import { WorkspaceCenter } from "./WorkspaceCenter";
@@ -19,11 +20,12 @@ import { WorkspaceCenter } from "./WorkspaceCenter";
  * The bottom bar uses `pb-[env(safe-area-inset-bottom)]` so it clears
  * the iOS home indicator when the page is added to the home screen.
  */
-type MobileTab = "tasks" | "workspace" | "agents";
+type MobileTab = "tasks" | "workspace" | "amigos" | "agents";
 
 const TABS: { id: MobileTab; label: string; icon: string }[] = [
   { id: "tasks", label: "Tasks", icon: "▤" },
   { id: "workspace", label: "Workspace", icon: "▣" },
+  { id: "amigos", label: "Amigos", icon: "✦" },
   { id: "agents", label: "Agents", icon: "◆" },
 ];
 
@@ -67,6 +69,15 @@ export function MobileShell() {
             }
           >
             <WorkspaceCenter />
+          </div>
+        )}
+        {visited.has("amigos") && (
+          <div
+            className={
+              "absolute inset-0 " + (tab === "amigos" ? "block" : "hidden")
+            }
+          >
+            <AmigosPanel />
           </div>
         )}
         {visited.has("agents") && (
