@@ -20,6 +20,9 @@ const DEV_MODES = ["Vibe Code", "Spec Driven"] as const;
 
 export function KanbanPanel() {
   const [state, setState] = useState<RuntimeState | null>(null);
+  // Local state for the selectors mirrors the persisted harness fields.
+  // We initialise from the defaults so the UI renders before the SSE
+  // state arrives, then keep them in sync via the effect below.
   const [methodology, setMethodology] =
     useState<(typeof METHODOLOGIES)[number]>("Shape Up");
   const [devMode, setDevMode] =
@@ -37,13 +40,56 @@ export function KanbanPanel() {
     const es = new EventSource("/api/runtime/state");
     es.addEventListener("state", (ev) => {
       try {
-        setState(JSON.parse((ev as MessageEvent).data) as RuntimeState);
+        const next = JSON.parse((ev as MessageEvent).data) as RuntimeState;
+        setState(next);
+        // Reflect persisted harness picks back into the selectors so
+        // the dropdowns stay coherent across reloads / multi-tab use.
+        const m = next.harness?.methodology;
+        if (m && (METHODOLOGIES as readonly string[]).includes(m)) {
+          setMethodology(m as (typeof METHODOLOGIES)[number]);
+        }
+        const d = next.harness?.devMode;
+        if (d && (DEV_MODES as readonly string[]).includes(d)) {
+          setDevMode(d as (typeof DEV_MODES)[number]);
+        }
       } catch {
         /* ignore */
       }
     });
     return () => es.close();
   }, []);
+
+  /**
+   * Persist a methodology / dev-mode change to the harness so the
+   * planner system prompt actually picks it up. Failures surface as
+   * the inline error banner — best-effort, the local state still
+   * updates so the dropdown reflects the user's intent.
+   */
+  const patchHarness = async (patch: {
+    methodology?: string;
+    devMode?: string;
+  }): Promise<void> => {
+    try {
+      const res = await fetch("/api/runtime/harness", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error(`harness patch failed (${res.status})`);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const onMethodologyChange = (v: (typeof METHODOLOGIES)[number]) => {
+    setMethodology(v);
+    void patchHarness({ methodology: v });
+  };
+
+  const onDevModeChange = (v: (typeof DEV_MODES)[number]) => {
+    setDevMode(v);
+    void patchHarness({ devMode: v });
+  };
 
   useEffect(() => {
     if (showAdd) addInputRef.current?.focus();
@@ -212,13 +258,13 @@ export function KanbanPanel() {
           label="Methodology"
           value={methodology}
           options={METHODOLOGIES}
-          onChange={setMethodology}
+          onChange={onMethodologyChange}
         />
         <Selector
           label="Dev mode"
           value={devMode}
           options={DEV_MODES}
-          onChange={setDevMode}
+          onChange={onDevModeChange}
         />
       </div>
 

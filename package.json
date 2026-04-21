@@ -4,7 +4,8 @@
   "description": "Use Anthropic's Claude Code CLI with your ChatGPT Plus/Pro subscription",
   "main": "bin/gateway.js",
   "bin": {
-    "claude-codex": "./bin/gateway.js"
+    "claude-codex": "./bin/gateway.js",
+    "claude-codex-gateway": "./bin/gateway.js"
   },
   "scripts": {
     "gateway": "node bin/gateway.js",

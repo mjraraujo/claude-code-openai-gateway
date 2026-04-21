@@ -40,6 +40,14 @@ export async function PATCH(req: Request): Promise<Response> {
         draft.harness.model = trimmed;
       }
     }
+    if (typeof body.methodology === "string") {
+      // Free-form short label surfaced to the planner system prompt.
+      // Cap length so the prompt can't be ballooned via this field.
+      draft.harness.methodology = body.methodology.trim().slice(0, 64);
+    }
+    if (typeof body.devMode === "string") {
+      draft.harness.devMode = body.devMode.trim().slice(0, 64);
+    }
   });
   return NextResponse.json({ harness: next.harness });
 }

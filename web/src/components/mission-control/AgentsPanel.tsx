@@ -362,6 +362,23 @@ export function AgentsPanel() {
             View {currentRun ? "live" : "last"} run log →
           </button>
         )}
+        {/*
+          Force-clear escape hatch. The auto-drive singleton is held in
+          process memory; if the loop crashes in a way that bypasses
+          the normal terminate path we'd be stuck unable to start a
+          new run. This button asks the server to scrub the singleton
+          and any dangling `current` state. Always shown — it's a
+          no-op when there's nothing to clear.
+        */}
+        <button
+          type="button"
+          onClick={() => void forceStopAutoDrive(setBusy, setError)}
+          disabled={busy}
+          className="rounded-md border border-zinc-900 px-2 py-1 text-left text-[11px] text-zinc-500 hover:border-zinc-800 hover:text-zinc-300 disabled:opacity-50"
+          title="Force-clear a stuck auto-drive (use when 'engage' returns auto_drive_already_running but no run is visible)"
+        >
+          Force stop / clear
+        </button>
         <p className="font-mono text-[10px] leading-4 text-zinc-600">
           Continuous, looped agent execution. Per-step + wall-time + byte
           budgets enforced server-side.
@@ -474,6 +491,29 @@ async function stopAutoDrive(
       body: JSON.stringify({ action: "stop" }),
     });
     if (!res.ok) throw new Error(`stop failed (${res.status})`);
+  } catch (err) {
+    setError((err as Error).message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function forceStopAutoDrive(
+  setBusy: (b: boolean) => void,
+  setError: (e: string | null) => void,
+): Promise<void> {
+  setBusy(true);
+  setError(null);
+  try {
+    const res = await fetch("/api/runtime/auto-drive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "force-stop" }),
+    });
+    if (!res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(j.error || `force-stop failed (${res.status})`);
+    }
   } catch (err) {
     setError((err as Error).message);
   } finally {

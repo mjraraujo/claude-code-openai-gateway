@@ -1,23 +1,23 @@
-# Mission Control container exposes:
+# Claude Codex container exposes:
 #   - 3000  : Next.js dashboard (login + UI)         — bind to your reverse proxy
 #
-# The Codex gateway proxy (port 18923, Anthropic ↔ OpenAI translation)
-# is intentionally **not** published. It runs inside the container,
-# binds to 127.0.0.1 only, and is reached by Mission Control over
-# container loopback. Because the proxy has no authentication of its
-# own, keeping it container-internal removes the possibility of
+# The claude-codex gateway proxy (port 18923, Anthropic ↔ OpenAI
+# translation) is intentionally **not** published. It runs inside the
+# container, binds to 127.0.0.1 only, and is reached by the dashboard
+# over container loopback. Because the proxy has no authentication of
+# its own, keeping it container-internal removes the possibility of
 # accidentally exposing it on a VPS.
 #
 # If you specifically want to use the gateway from your *host's*
-# Claude Code CLI, run `node bin/gateway.js` directly on the host
-# (outside Docker) instead — see the README.
+# Claude Code CLI, run `claude-codex-gateway --serve` directly on the
+# host (outside Docker) instead — see the README.
 #
-# A named volume keeps the OAuth token + Mission Control state
+# A named volume keeps the OAuth token + dashboard state
 # (~/.codex-gateway inside the container) across restarts so users
 # only have to log in once.
 
 services:
-  mission-control:
+  claude-codex:
     # Build locally from the checked-out source by default.
     build: .
     # Or, on a VPS, pull the prebuilt image from GHCR instead and remove
@@ -49,16 +49,18 @@ services:
       # the comment at the top of this file.
     environment:
       # Workspace for the embedded fs/exec tools. Override to mount a
-      # repo from the host (see the volume below).
-      MISSION_CONTROL_WORKSPACE: /workspace
+      # repo from the host (see the volume below). Both env names are
+      # honoured — `CLAUDE_CODEX_*` is the new canonical prefix and
+      # `MISSION_CONTROL_*` is kept as a backwards-compatible alias.
+      CLAUDE_CODEX_WORKSPACE: /workspace
       # Optional cookie-security overrides. Only set these if your
       # reverse proxy strips `x-forwarded-proto` and the auto-detection
       # picks the wrong mode.
-      #   MISSION_CONTROL_FORCE_SECURE_COOKIES: "1"  # always Secure
-      #   MISSION_CONTROL_INSECURE_COOKIES:    "1"   # never Secure
+      #   CLAUDE_CODEX_FORCE_SECURE_COOKIES: "1"  # always Secure
+      #   CLAUDE_CODEX_INSECURE_COOKIES:    "1"   # never Secure
     volumes:
-      # Persist OAuth token + Mission Control state.
-      - mission-control-state:/root/.codex-gateway
+      # Persist OAuth token + dashboard state.
+      - claude-codex-state:/root/.codex-gateway
       # Mount the host workspace read-write so the dashboard's
       # filesystem and exec tools operate against your project. The
       # ./workspace directory is auto-created on first `up` if missing.
@@ -72,4 +74,4 @@ services:
       start_period: 20s
 
 volumes:
-  mission-control-state:
+  claude-codex-state:

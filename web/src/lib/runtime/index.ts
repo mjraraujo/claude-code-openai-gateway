@@ -23,5 +23,5 @@ export type {
   Task,
   TaskColumn,
 } from "./store";
-export { startAutoDrive, stopAutoDrive } from "./drive";
+export { startAutoDrive, stopAutoDrive, forceClearAutoDrive } from "./drive";
 export { parseSchedule } from "./cron";

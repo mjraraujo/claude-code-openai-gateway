@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { isSessionAuthenticated } from "@/lib/auth/session";
-import { startAutoDrive, stopAutoDrive } from "@/lib/runtime";
+import { forceClearAutoDrive, startAutoDrive, stopAutoDrive } from "@/lib/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,10 +16,12 @@ interface Body {
 }
 
 /**
- * POST /api/runtime/auto-drive  body: { action: "start" | "stop", goal?, maxSteps? }
+ * POST /api/runtime/auto-drive  body: { action: "start" | "stop" | "force-stop", goal?, maxSteps? }
  *
- * Starting returns the new run record; stopping is idempotent and
- * returns 200 even if no run was active.
+ * Starting returns the new run record; stop/force-stop are idempotent
+ * and return 200 even if no run was active. `force-stop` additionally
+ * clears any dangling `current` run left behind by a crashed previous
+ * process so the singleton can accept a new start.
  */
 export async function POST(req: Request): Promise<Response> {
   if (!(await isSessionAuthenticated())) {
@@ -31,13 +33,24 @@ export async function POST(req: Request): Promise<Response> {
   } catch {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
-  const action = body.action === "stop" ? "stop" : body.action === "start" ? "start" : null;
+  const action =
+    body.action === "stop"
+      ? "stop"
+      : body.action === "start"
+        ? "start"
+        : body.action === "force-stop"
+          ? "force-stop"
+          : null;
   if (!action) {
     return NextResponse.json({ error: "invalid_action" }, { status: 400 });
   }
 
   if (action === "stop") {
     await stopAutoDrive("stopped by user");
+    return NextResponse.json({ ok: true });
+  }
+  if (action === "force-stop") {
+    await forceClearAutoDrive("force-cleared by user");
     return NextResponse.json({ ok: true });
   }
 

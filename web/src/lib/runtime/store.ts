@@ -55,6 +55,14 @@ export interface HarnessState {
    * to a backend route.
    */
   model: string;
+  /**
+   * Planning style hints surfaced to the auto-drive planner system
+   * prompt. Driven by the Kanban panel selectors so the operator's
+   * choice actually changes how the loop plans, not just how it's
+   * labelled in the UI. Both default to empty (no hint).
+   */
+  methodology?: string;
+  devMode?: string;
 }
 
 export const DEFAULT_MODEL = "gpt-5.4";
@@ -165,6 +173,8 @@ const DEFAULT_STATE: RuntimeState = {
     streamToolOutput: true,
     persistContext: false,
     model: DEFAULT_MODEL,
+    methodology: "Shape Up",
+    devMode: "Spec Driven",
   },
   departments: [
     { id: "engineering", name: "Engineering", cron: [] },

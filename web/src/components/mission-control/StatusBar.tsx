@@ -17,10 +17,38 @@ interface DeviceCode {
   interval_seconds: number;
 }
 
+type GpuState = "checking" | "available" | "unavailable" | "no-window";
+
+/**
+ * Lightweight WebGPU/WebGL probe shown as a dot in the status bar.
+ *
+ * WebGPU is a hardware-acceleration feature, not a workspace tab. The
+ * dashboard exposes its presence here so users can see at a glance
+ * whether their browser will accelerate Monaco / future canvas-based
+ * surfaces, without dedicating a tab to it.
+ */
+function detectGpu(): GpuState {
+  if (typeof window === "undefined") return "no-window";
+  if (typeof navigator !== "undefined" && "gpu" in navigator) return "available";
+  // Fall back to WebGL — at least one GPU-accelerated context exists.
+  try {
+    const c = document.createElement("canvas");
+    if (c.getContext("webgl2") || c.getContext("webgl")) return "available";
+  } catch {
+    /* ignore */
+  }
+  return "unavailable";
+}
+
 export function StatusBar() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
   const [reauthOpen, setReauthOpen] = useState(false);
+  const [gpu, setGpu] = useState<GpuState>("checking");
+
+  useEffect(() => {
+    setGpu(detectGpu());
+  }, []);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -77,12 +105,43 @@ export function StatusBar() {
             }
           />
           <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-            mission control
+            claude codex
           </span>
         </div>
         <span className="text-zinc-700">·</span>
         <span className="font-mono text-[10px] text-zinc-500">
           gateway: localhost:18923
+        </span>
+        <span className="text-zinc-700">·</span>
+        <span
+          title={
+            gpu === "available"
+              ? "Hardware acceleration available (WebGPU or WebGL)"
+              : gpu === "unavailable"
+                ? "No GPU acceleration detected — UI will use CPU rendering"
+                : "Checking GPU support…"
+          }
+          className={
+            "flex items-center gap-1 font-mono text-[10px] " +
+            (gpu === "available"
+              ? "text-emerald-400"
+              : gpu === "unavailable"
+                ? "text-amber-400"
+                : "text-zinc-500")
+          }
+        >
+          <span
+            aria-hidden
+            className={
+              "inline-block h-1.5 w-1.5 rounded-full " +
+              (gpu === "available"
+                ? "bg-emerald-400"
+                : gpu === "unavailable"
+                  ? "bg-amber-400"
+                  : "bg-zinc-600")
+            }
+          />
+          gpu {gpu === "available" ? "ok" : gpu === "unavailable" ? "off" : "…"}
         </span>
         {autoDriveActive && (
           <>

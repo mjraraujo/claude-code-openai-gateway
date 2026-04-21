@@ -150,7 +150,7 @@ function sleep(ms) {
 
 async function runSetup() {
   console.log('\n╔══════════════════════════════════════════════════╗');
-  console.log('║    ⚙️  Codex Gateway — Settings                  ║');
+  console.log('║    ⚙️  Claude Codex — Settings                   ║');
   console.log('╚══════════════════════════════════════════════════╝\n');
 
   const existing = loadConfig();
@@ -507,6 +507,19 @@ function startProxy(config, accessToken, accountId) {
       });
     });
 
+    server.on('error', (err) => {
+      if (err && err.code === 'EADDRINUSE') {
+        console.error(`\n  ❌ Port ${PROXY_PORT} is already in use.`);
+        console.error(`     Another claude-codex gateway (or the Docker entrypoint) is`);
+        console.error(`     probably already serving on 127.0.0.1:${PROXY_PORT}. Use the`);
+        console.error(`     existing instance via the \`claude-codex\` CLI wrapper, or`);
+        console.error(`     stop the other process before starting a new one.\n`);
+        process.exit(2);
+      }
+      console.error(`\n  ❌ Proxy server error: ${err && err.message ? err.message : err}\n`);
+      process.exit(1);
+    });
+
     // Bind to loopback only. The proxy has no authentication of its
     // own (it relies on the OAuth token cached at ~/.codex-gateway), so
     // it must never be reachable from a non-local network. In the
@@ -569,7 +582,8 @@ async function main() {
   config.default_model = 'gpt-5.4';
 
   console.log('\n╔══════════════════════════════════════════════════╗');
-  console.log('║     🚀 Codex Gateway — OpenAI Login for Claude  ║');
+  console.log('║     🚀 Claude Codex — Anthropic-shaped Gateway   ║');
+  console.log('║     (proxies Claude Code → ChatGPT Codex API)    ║');
   console.log('╚══════════════════════════════════════════════════╝\n');
   console.log(`  Model: ${config.default_model}  |  API: ${config.target_api_url}\n`);
 
@@ -655,7 +669,7 @@ async function main() {
   }, null, 2), { mode: 0o600 });
 
   // Launch claude
-  console.log('  🚀 Launching Claude Code...\n');
+  console.log('  🚀 Launching Claude Code through the claude-codex gateway...\n');
   console.log('  ─────────────────────────────────────────────────\n');
 
   const claudeEnv = {

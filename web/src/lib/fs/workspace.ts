@@ -11,14 +11,18 @@
 import path from "node:path";
 import { realpath } from "node:fs/promises";
 
+import { readEnv } from "@/lib/env";
+
 /**
  * Resolved at module load. We default to the parent of `process.cwd()`
  * because `next dev` / `next start` runs from `web/`. The
- * `MISSION_CONTROL_WORKSPACE` env var lets users override (useful in
- * tests or when running the dashboard from a different directory).
+ * `CLAUDE_CODEX_WORKSPACE` env var (alias `MISSION_CONTROL_WORKSPACE`)
+ * lets users override (useful in tests or when running the dashboard
+ * from a different directory).
  */
 export const WORKSPACE_ROOT = path.resolve(
-  process.env.MISSION_CONTROL_WORKSPACE || path.join(process.cwd(), ".."),
+  readEnv("CLAUDE_CODEX_WORKSPACE", "MISSION_CONTROL_WORKSPACE") ||
+    path.join(process.cwd(), ".."),
 );
 
 /**

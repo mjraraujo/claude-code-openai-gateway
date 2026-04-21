@@ -5,17 +5,15 @@ import { useCallback, useState } from "react";
 import { BrowserView } from "./BrowserView";
 import { SideBySideView } from "./SideBySideView";
 import { TerminalView } from "./TerminalView";
-import { WebGPUView } from "./WebGPUView";
 import { WorkspaceView } from "./WorkspaceView";
 
-type Tab = "terminal" | "workspace" | "side-by-side" | "browser" | "webgpu";
+type Tab = "terminal" | "workspace" | "side-by-side" | "browser";
 
 const ALL_TABS: { id: Tab; label: string }[] = [
   { id: "terminal", label: "Terminal" },
   { id: "workspace", label: "Workspace" },
   { id: "side-by-side", label: "Side-by-Side" },
   { id: "browser", label: "Browser" },
-  { id: "webgpu", label: "WebGPU" },
 ];
 
 export interface WorkspaceCenterProps {
@@ -98,11 +96,6 @@ export function WorkspaceCenter({ hideTerminal = false }: WorkspaceCenterProps) 
         {visited.has("browser") && (
           <div className={tab === "browser" ? "h-full" : "hidden"}>
             <BrowserView />
-          </div>
-        )}
-        {visited.has("webgpu") && (
-          <div className={tab === "webgpu" ? "h-full" : "hidden"}>
-            <WebGPUView />
           </div>
         )}
       </div>

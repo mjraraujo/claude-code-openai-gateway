@@ -117,6 +117,37 @@ export async function stopAutoDrive(reason = "stopped by user"): Promise<void> {
   await terminate(a.runId, "stopped", reason);
 }
 
+/**
+ * Recover from a stuck `active` singleton by forcing it back to null
+ * even if the corresponding run can't be reconciled. Callable from
+ * the UI's "Force stop" button to unwedge runs whose loop crashed in
+ * a way that bypassed the normal termination path.
+ */
+export async function forceClearAutoDrive(reason = "force-cleared"): Promise<void> {
+  const a = active;
+  if (a) {
+    try {
+      a.abort.abort();
+    } catch {
+      /* ignore */
+    }
+    await terminate(a.runId, "stopped", reason);
+  }
+  // Belt and braces: even if `active` was null on entry, scrub any
+  // dangling `current` left over by a crashed previous process.
+  await getStore().update((draft) => {
+    if (draft.autoDrive.current) {
+      const cur = draft.autoDrive.current;
+      cur.status = "stopped";
+      cur.endedAt = Date.now();
+      cur.reason = reason;
+      draft.autoDrive.history = [cur, ...draft.autoDrive.history].slice(0, 10);
+      draft.autoDrive.current = null;
+    }
+  });
+  active = null;
+}
+
 async function runLoop(a: ActiveLoop): Promise<void> {
   const startedAt = Date.now();
   let stepIndex = 0;
@@ -141,11 +172,16 @@ async function runLoop(a: ActiveLoop): Promise<void> {
       // 1. Plan
       let p;
       try {
+        // Re-read methodology/devMode from the store on every step
+        // so the user can change them mid-run via the Kanban panel.
+        const live = await getStore().snapshot();
         p = await plan({
           goal: a.options.goal,
           steps: run.steps,
           maxStepsRemaining: a.options.maxSteps - stepIndex,
           model: a.options.model,
+          methodology: live.harness.methodology,
+          devMode: live.harness.devMode,
         });
       } catch (err) {
         await appendStep(a.runId, "error", `planner error: ${(err as Error).message}`);
