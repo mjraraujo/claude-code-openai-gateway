@@ -4,6 +4,8 @@ import { isSessionAuthenticated } from "@/lib/auth/session";
 import {
   getStore,
   newId,
+  normalizeAssignees,
+  normalizeIsoDate,
   normalizeSubtasks,
   type Task,
   type TaskColumn,
@@ -19,11 +21,16 @@ const VALID_COLUMNS = new Set<TaskColumn>([
   "shipped",
 ]);
 const TAG_RE = /^[\w\-]{1,20}$/;
+const ID_RE = /^[\w.\-]{1,64}$/;
 
 interface CreateBody {
   title?: unknown;
   column?: unknown;
   tag?: unknown;
+  workspaceId?: unknown;
+  dueDate?: unknown;
+  assignees?: unknown;
+  sprintId?: unknown;
 }
 
 interface PatchBody {
@@ -32,6 +39,10 @@ interface PatchBody {
   title?: unknown;
   runId?: unknown;
   subtasks?: unknown;
+  workspaceId?: unknown;
+  dueDate?: unknown;
+  assignees?: unknown;
+  sprintId?: unknown;
 }
 
 interface DeleteBody {
@@ -64,12 +75,30 @@ export async function POST(req: Request): Promise<Response> {
       : undefined;
 
   const next = await getStore().update((draft) => {
+    // Resolve workspaceId — explicit (must exist) or default to active.
+    let workspaceId: string | undefined;
+    if (typeof body.workspaceId === "string" && body.workspaceId) {
+      if (!draft.workspaces.some((w) => w.id === body.workspaceId)) return;
+      workspaceId = body.workspaceId;
+    } else {
+      workspaceId = draft.activeWorkspaceId;
+    }
+    // Resolve sprintId — must exist if provided.
+    let sprintId: string | undefined;
+    if (typeof body.sprintId === "string" && body.sprintId) {
+      if (!draft.sprints.some((s) => s.id === body.sprintId)) return;
+      sprintId = body.sprintId;
+    }
     const task: Task = {
       id: newId("T"),
       title,
       column,
       tag,
       createdAt: Date.now(),
+      workspaceId,
+      sprintId,
+      dueDate: normalizeIsoDate(body.dueDate),
+      assignees: normalizeAssignees(body.assignees),
     };
     draft.tasks.push(task);
   });
@@ -123,6 +152,38 @@ export async function PATCH(req: Request): Promise<Response> {
       } else {
         task.subtasks = normalizeSubtasks(body.subtasks);
       }
+    }
+    if (body.workspaceId !== undefined) {
+      if (body.workspaceId === null) {
+        task.workspaceId = undefined;
+      } else if (
+        typeof body.workspaceId === "string" &&
+        ID_RE.test(body.workspaceId) &&
+        draft.workspaces.some((w) => w.id === body.workspaceId)
+      ) {
+        task.workspaceId = body.workspaceId;
+      }
+    }
+    if (body.sprintId !== undefined) {
+      if (body.sprintId === null) {
+        task.sprintId = undefined;
+      } else if (
+        typeof body.sprintId === "string" &&
+        ID_RE.test(body.sprintId) &&
+        draft.sprints.some((s) => s.id === body.sprintId)
+      ) {
+        task.sprintId = body.sprintId;
+      }
+    }
+    if (body.dueDate !== undefined) {
+      // null clears; anything else goes through the validator
+      // (ISO-8601, length-capped). Garbage is silently ignored.
+      task.dueDate = body.dueDate === null ? undefined : normalizeIsoDate(body.dueDate);
+    }
+    if (body.assignees !== undefined) {
+      // Full-array replacement, like subtasks.
+      task.assignees =
+        body.assignees === null ? undefined : normalizeAssignees(body.assignees);
     }
   });
   if (!found) {

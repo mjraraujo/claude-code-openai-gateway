@@ -8,6 +8,12 @@ import {
   isValidPersona,
   type HarnessState,
 } from "@/lib/runtime";
+import {
+  findDevMode,
+  findMethodology,
+  scaffoldMethodology,
+  type ScaffoldResult,
+} from "@/lib/runtime/methodology";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +23,13 @@ export const dynamic = "force-dynamic";
  *
  * Validates each known boolean independently. Unknown keys are
  * silently dropped to keep the API forward-compatible.
+ *
+ * Side-effect: when `methodology` or `devMode` changes, the matching
+ * registry entry's templates are scaffolded into the active
+ * workspace (idempotent — existing files are never overwritten).
+ * The set of files seeded is returned in the response so the UI
+ * can surface a "Seeded N files in workspace … for <methodology>"
+ * toast.
  */
 export async function PATCH(req: Request): Promise<Response> {
   if (!(await isSessionAuthenticated())) {
@@ -28,6 +41,10 @@ export async function PATCH(req: Request): Promise<Response> {
   } catch {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
+  // Capture the prior values so we only fire scaffolding when the
+  // value actually changed (PATCH may carry the same values from
+  // the UI on every save).
+  const before = (await getStore().snapshot()).harness;
   const next = await getStore().update((draft) => {
     if (typeof body.autoApproveSafeEdits === "boolean") {
       draft.harness.autoApproveSafeEdits = body.autoApproveSafeEdits;
@@ -40,38 +57,55 @@ export async function PATCH(req: Request): Promise<Response> {
     }
     if (typeof body.model === "string") {
       const trimmed = body.model.trim();
-      // Same id-shape constraint shared with `/api/runtime/agents`
-      // (per-agent override) and `/api/runtime/chat` (request body).
       if (isValidModelId(trimmed)) {
         draft.harness.model = trimmed;
       }
     }
     if (typeof body.methodology === "string") {
-      // Free-form short label surfaced to the planner system prompt.
-      // Cap length so the prompt can't be ballooned via this field,
-      // and strip control chars / backticks so a value like
-      // "Scrum`\nIGNORE PREVIOUS" can't break out of the prompt
-      // structure.
       draft.harness.methodology = sanitizePromptLabel(body.methodology);
     }
     if (typeof body.devMode === "string") {
       draft.harness.devMode = sanitizePromptLabel(body.devMode);
     }
     if (body.persona !== undefined) {
-      // Closed enum — silently drop unknown values rather than 400ing
-      // so the field stays forward-compatible with future personas.
       if (isValidPersona(body.persona)) {
         draft.harness.persona = body.persona;
       }
     }
     if (body.driveMode !== undefined) {
-      // Closed enum — same forward-compat pattern as `persona`.
       if (isValidDriveMode(body.driveMode)) {
         draft.harness.driveMode = body.driveMode;
       }
     }
   });
-  return NextResponse.json({ harness: next.harness });
+
+  // Fire scaffolding side-effects after the store has settled so
+  // `scaffoldMethodology()` sees the new active workspace + harness
+  // state. Errors here are non-fatal — the harness change has
+  // already been persisted.
+  const seeded: ScaffoldResult[] = [];
+  if (next.harness.methodology !== before.methodology) {
+    const entry = findMethodology(next.harness.methodology);
+    if (entry) {
+      try {
+        seeded.push(await scaffoldMethodology(next, entry, "methodology"));
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }
+  if (next.harness.devMode !== before.devMode) {
+    const entry = findDevMode(next.harness.devMode);
+    if (entry) {
+      try {
+        seeded.push(await scaffoldMethodology(next, entry, "devMode"));
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }
+
+  return NextResponse.json({ harness: next.harness, scaffolded: seeded });
 }
 
 /**
