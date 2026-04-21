@@ -54,6 +54,18 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
+# Run the container as a dedicated non-root user. The upstream
+# `@anthropic-ai/claude-code` CLI hard-refuses
+# `--dangerously-skip-permissions` when `geteuid() === 0`, so the
+# Claude Codex terminal is unusable as root. Creating a dedicated
+# `claude` user with a real $HOME unblocks the auto-skip and lets
+# operators use the tool out of the box.
+ARG CLAUDE_UID=10001
+ARG CLAUDE_GID=10001
+RUN addgroup -S -g "${CLAUDE_GID}" claude \
+    && adduser -S -D -u "${CLAUDE_UID}" -G claude \
+        -h /home/claude -s /bin/bash claude
+
 # Install the official Anthropic Claude Code CLI globally so the
 # `claude-codex` wrapper has something to exec into. Without this
 # step the wrapper falls back to printing an "install with: npm i -g
@@ -90,7 +102,11 @@ COPY --from=web-builder /app/web/public ./web/public
 # container so Docker / k8s can restart it cleanly.
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
-    && mkdir -p /root/.codex-gateway
+    && mkdir -p /home/claude/.codex-gateway \
+    && chown -R claude:claude /app /home/claude
+
+USER claude
+ENV HOME=/home/claude
 
 ENV NODE_ENV=production \
     PORT=3000 \

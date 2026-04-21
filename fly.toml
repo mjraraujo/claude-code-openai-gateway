@@ -53,4 +53,4 @@ primary_region = "iad"
 # Claude Codex state (~/.codex-gateway/claude-codex.json) across deploys.
 [mounts]
   source = "codex_gateway_state"
-  destination = "/root/.codex-gateway"
+  destination = "/home/claude/.codex-gateway"

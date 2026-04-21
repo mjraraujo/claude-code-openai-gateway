@@ -59,8 +59,9 @@ services:
       #   CLAUDE_CODEX_FORCE_SECURE_COOKIES: "1"  # always Secure
       #   CLAUDE_CODEX_INSECURE_COOKIES:    "1"   # never Secure
     volumes:
-      # Persist OAuth token + dashboard state.
-      - claude-codex-state:/root/.codex-gateway
+      # Persist OAuth token + dashboard state. The container runs as
+      # the non-root `claude` user (uid 10001) so $HOME is /home/claude.
+      - claude-codex-state:/home/claude/.codex-gateway
       # Mount the host workspace read-write so the dashboard's
       # filesystem and exec tools operate against your project. The
       # ./workspace directory is auto-created on first `up` if missing.
