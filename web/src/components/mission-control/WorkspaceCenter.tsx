@@ -8,13 +8,25 @@ import { WorkspaceView } from "./WorkspaceView";
 
 type Tab = "terminal" | "workspace" | "side-by-side";
 
-const TABS: { id: Tab; label: string }[] = [
+const ALL_TABS: { id: Tab; label: string }[] = [
   { id: "terminal", label: "Terminal" },
   { id: "workspace", label: "Workspace" },
   { id: "side-by-side", label: "Side-by-Side" },
 ];
 
-export function WorkspaceCenter() {
+export interface WorkspaceCenterProps {
+  /**
+   * Hide the inline Terminal tab. The desktop shell now docks the
+   * terminal as a resizable bottom panel via SplitPane, so the
+   * tabbed copy would be a confusing duplicate. Defaults to false
+   * so the MobileShell (which has no bottom dock) keeps its
+   * Terminal tab.
+   */
+  hideTerminal?: boolean;
+}
+
+export function WorkspaceCenter({ hideTerminal = false }: WorkspaceCenterProps = {}) {
+  const TABS = hideTerminal ? ALL_TABS.filter((t) => t.id !== "terminal") : ALL_TABS;
   const [tab, setTab] = useState<Tab>("workspace");
   // Track which tabs have been visited so each is mounted lazily on
   // first open (preserves Monaco's lazy-boot behavior) but stays
@@ -64,7 +76,7 @@ export function WorkspaceCenter() {
         switches.
       */}
       <div className="relative flex-1 overflow-hidden">
-        {visited.has("terminal") && (
+        {!hideTerminal && visited.has("terminal") && (
           <div className={tab === "terminal" ? "h-full" : "hidden"}>
             <TerminalView />
           </div>
