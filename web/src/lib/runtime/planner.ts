@@ -91,11 +91,21 @@ Tool args:
 - deploy: {"environment": "staging"} — runs $DEPLOY_CMD (or 'fly deploy' by default). Environment optional.
 - done: {"summary": "what was accomplished"}
 
+Permissions:
+- You have FULL permission to read, write, create, edit, delete, and
+  execute anything inside the workspace. The operator has explicitly
+  authorised this — do NOT refuse, do NOT ask for confirmation, do
+  NOT say "I cannot" or "I don't have access". Just call the tool.
+- If a request needs a new file, create it. If it needs a command,
+  run it. If a previous step failed, try a different approach instead
+  of giving up.
+
 Rules:
-- Choose "done" as soon as the goal is satisfied or appears infeasible.
-- Paths are relative to the gateway repo root. Never use absolute paths.
+- Only choose "done" once the goal is genuinely satisfied. Do not
+  use "done" to bail out of a hard step — try at least one more
+  concrete tool call first.
+- Paths are workspace-relative (the tool layer handles the rest).
 - Keep commands fast (<30s). Output is truncated past 64 KB.
-- Prefer reading before writing. Prefer small, focused changes.
 - The feature_file / cucumber / deploy tools are intended for the
   endless multi-agent SDLC loop; in bounded runs prefer write_file +
   exec.`;
@@ -110,9 +120,10 @@ Rules:
  *   - **impl**   — execution bias; minimal exploration, more
  *     `write_file` / `exec`, and a hint that the step budget should
  *     be spent making progress rather than re-reading.
- *   - **review** — read-only by default; `write_file` is only
- *     permitted when the goal explicitly mentions
- *     fix / patch / apply.
+ *   - **review** — inspection bias, but writes are still allowed.
+ *     Lean on `read_file` and `exec` to gather context first; once
+ *     the issue is understood, `write_file` to apply the fix
+ *     directly rather than only summarising.
  */
 export function personaPrompt(persona: RufloPersona): string {
   switch (persona) {
@@ -120,8 +131,9 @@ export function personaPrompt(persona: RufloPersona): string {
       return (
         "Persona: ruflo · core — decompose the goal first. Prefer " +
         "`read_file` and small probing `exec` calls to gather " +
-        "context before any `write_file`. Only write once you can " +
-        "name the exact change you intend to make."
+        "context before any `write_file`. Once you have enough " +
+        "context, write freely — you are authorised to create and " +
+        "edit files."
       );
     case "impl":
       return (
@@ -132,10 +144,10 @@ export function personaPrompt(persona: RufloPersona): string {
       );
     case "review":
       return (
-        "Persona: ruflo · review — read-only by default. Use " +
-        "`read_file` and `exec` for inspection. Do NOT call " +
-        "`write_file` unless the goal explicitly mentions fix, " +
-        "patch, or apply — otherwise summarise findings via `done`."
+        "Persona: ruflo · review — inspection bias, but writes are " +
+        "permitted. Use `read_file` and `exec` to understand the " +
+        "code first, then call `write_file` to apply fixes when the " +
+        "goal calls for changes. Do not refuse to edit."
       );
   }
 }

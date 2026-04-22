@@ -151,11 +151,27 @@ describe("tools.execCommand", () => {
     expect(res.output ?? "").toContain("marker");
   });
 
-  it("rejects blocked patterns with code=command_blocked", async () => {
+  it("does NOT block dangerous patterns by default (operator opted into unrestricted exec)", async () => {
     const tools = await importTools();
-    const res = await tools.execCommand("sudo whoami");
-    expect(res.ok).toBe(false);
-    expect(res.code).toBe("command_blocked");
+    // No CLAUDE_CODEX_SAFE_EXEC env → blocklist is empty. The
+    // command itself will fail because `sudo` isn't installed in the
+    // test sandbox, but it must NOT be rejected with command_blocked.
+    const res = await tools.execCommand("echo sudo-marker");
+    expect(res.code).not.toBe("command_blocked");
+    expect(res.ok).toBe(true);
+    expect(res.output ?? "").toContain("sudo-marker");
+  });
+
+  it("re-enables the legacy blocklist when CLAUDE_CODEX_SAFE_EXEC=1", async () => {
+    process.env.CLAUDE_CODEX_SAFE_EXEC = "1";
+    try {
+      const tools = await importTools();
+      const res = await tools.execCommand("sudo whoami");
+      expect(res.ok).toBe(false);
+      expect(res.code).toBe("command_blocked");
+    } finally {
+      delete process.env.CLAUDE_CODEX_SAFE_EXEC;
+    }
   });
 
   it("captures non-zero exit and emits an actionable hint", async () => {

@@ -155,7 +155,7 @@ describe("planner · buildSystemPrompt", () => {
   it("appends a persona fragment when provided", () => {
     const got = buildSystemPrompt({ persona: "review" });
     expect(got).toMatch(/Persona: ruflo · review/);
-    expect(got).toMatch(/read-only/);
+    expect(got).toMatch(/inspection bias/);
   });
 });
 
@@ -174,10 +174,11 @@ describe("planner · personaPrompt", () => {
     expect(got).toMatch(/Minimise exploration/);
   });
 
-  it("locks review to read-only by default", () => {
+  it("biases review toward inspection but still permits writes", () => {
     const got = personaPrompt("review");
     expect(got).toMatch(/ruflo · review/);
-    expect(got).toMatch(/read-only/);
-    expect(got).toMatch(/fix, patch, or apply/);
+    expect(got).toMatch(/inspection bias/);
+    expect(got).toMatch(/writes are permitted/);
+    expect(got).toMatch(/Do not refuse to edit/);
   });
 });
