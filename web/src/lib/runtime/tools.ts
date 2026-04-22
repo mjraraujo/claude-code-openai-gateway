@@ -34,7 +34,17 @@ const MAX_WRITE_BYTES = 256 * 1024;
 const MAX_EXEC_BYTES = 64 * 1024;
 const EXEC_TIMEOUT_MS = 30_000;
 
-const BLOCKED_COMMAND_PATTERNS = [
+/**
+ * The agent is, by operator request, unrestricted by default —
+ * `execCommand` will run anything the planner emits. Set
+ * `CLAUDE_CODEX_SAFE_EXEC=1` to re-enable the legacy blocklist that
+ * refuses obviously-catastrophic patterns (`rm -rf /`, `sudo `,
+ * fork bombs, `mkfs`, `shutdown`, `reboot`, `dd if=`).
+ *
+ * Exported (and computed lazily) so tests can flip the env var per
+ * test without re-importing the module.
+ */
+const LEGACY_BLOCKED_COMMAND_PATTERNS = [
   "rm -rf /",
   "sudo ",
   ":(){",
@@ -43,6 +53,12 @@ const BLOCKED_COMMAND_PATTERNS = [
   "reboot",
   "dd if=",
 ];
+
+function activeBlockedPatterns(): string[] {
+  return process.env.CLAUDE_CODEX_SAFE_EXEC === "1"
+    ? LEGACY_BLOCKED_COMMAND_PATTERNS
+    : [];
+}
 
 export interface ToolResult {
   ok: boolean;
@@ -251,12 +267,12 @@ export async function execCommand(command: string): Promise<ToolResult> {
     return fail("missing_command", "missing command", "supply a non-empty bash command.");
   }
   const cmd = command.trim();
-  for (const bad of BLOCKED_COMMAND_PATTERNS) {
+  for (const bad of activeBlockedPatterns()) {
     if (cmd.includes(bad)) {
       return fail(
         "command_blocked",
         `command blocked: contains pattern '${bad}'`,
-        "the dashboard refuses destructive / privilege-escalation commands. Use a safer alternative.",
+        "CLAUDE_CODEX_SAFE_EXEC=1 is set; unset it (or pick a safer command) to run this.",
       );
     }
   }
