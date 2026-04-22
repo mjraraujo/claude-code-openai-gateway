@@ -32,6 +32,10 @@ interface ActiveRun {
 let active: ActiveRun | null = null;
 
 interface PostBody {
+  /** Scope discriminator. Accepts the canonical `type` field (matching
+   * the {@link AmigosScope} shape the dashboard sends) and the legacy
+   * `scope` field. */
+  type?: unknown;
   scope?: unknown;
   path?: unknown;
   scenarioId?: unknown;
@@ -166,7 +170,10 @@ export async function DELETE(): Promise<Response> {
 }
 
 function parseScope(body: PostBody): AmigosScope | null {
-  const t = body.scope;
+  // Accept both the canonical `type` discriminator (what the dashboard
+  // sends — it stringifies an AmigosScope directly) and the legacy
+  // `scope` field that earlier callers used.
+  const t = typeof body.type === "string" ? body.type : body.scope;
   if (t === "all") return { type: "all" };
   if (t === "feature" && typeof body.path === "string" && body.path.trim()) {
     return { type: "feature", path: body.path };
