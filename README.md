@@ -431,7 +431,7 @@ docker compose up -d
 | Can reach `:3000` but not via your domain | Reverse proxy missing or DNS not pointing at the VPS. Check `dig codex.example.com` and `caddy validate`. |
 | SSE / live updates stop after ~60 s on Nginx | Add `proxy_read_timeout 1h` and `proxy_buffering off` (shown above). |
 | Container restart loops | `docker compose logs claude-codex` — usually a missing volume mount or port already in use. |
-| "permission denied" on `./workspace` | The bind mount is created as root by Docker. Either `sudo chown -R $USER ./workspace` on the host or run compose as root. |
+| "permission denied" on `./workspace` | Fixed automatically: the container's entrypoint now starts as root, `chown`s `/workspace` to the in-container `claude` user, then drops privileges before launching anything. If you still see this on a pre-existing host repo with files owned by another user, `sudo chown -R 10001:10001 ./workspace` once on the host. |
 
 ---
 

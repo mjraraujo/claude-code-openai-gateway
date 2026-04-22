@@ -65,13 +65,21 @@ FROM node:20-alpine AS runtime
 #   build-base — alpine's gcc/make/etc.; alpine equivalent of
 #                Debian's `build-essential`. Lets `npm install`
 #                build native modules if a user requests it.
+#   su-exec    — tiny setuid helper used by entrypoint.sh to drop
+#                privileges from root → claude *after* fixing the
+#                ownership of bind-mounted volumes. Without this the
+#                container would either run everything as root (which
+#                breaks the upstream `@anthropic-ai/claude-code` CLI)
+#                or run as claude from the start (which can't write
+#                to a host-mounted `./workspace` owned by root).
 RUN apk add --no-cache \
         tini \
         bash \
         git \
         curl \
         python3 \
-        build-base
+        build-base \
+        su-exec
 
 WORKDIR /app
 
@@ -137,7 +145,13 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p /workspace \
     && chown -R claude:claude /app /home/claude /workspace
 
-USER claude
+# NOTE: we deliberately do NOT switch to `USER claude` here. The
+# container starts as root so `entrypoint.sh` can `chown` bind-mounted
+# volumes (host `./workspace`, named state volume) to the `claude`
+# uid before dropping privileges with `su-exec`. Without that step,
+# operators hit "EACCES: permission denied" on every write inside
+# `/workspace` because bind mounts inherit the host directory's
+# ownership — overriding the chown above.
 ENV HOME=/home/claude
 
 ENV NODE_ENV=production \
