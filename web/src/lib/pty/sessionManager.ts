@@ -35,13 +35,13 @@ export const DEFAULT_ROWS = 32;
  * session is reaped to free file descriptors and the child process.
  *
  * Tuned to outlive a typical operator break (coffee, meeting,
- * picking up a phone call) without leaking a forgotten PTY when an
- * operator closes the browser tab. 10 minutes balances those two:
- * short enough that a stale tab doesn't tie up resources for the
- * day, long enough that a brief AFK doesn't kill an interactive
- * `claude` REPL mid-thought.
+ * picking up a phone call, brief page reload) without leaking a
+ * forgotten PTY when an operator closes the browser tab. 30 minutes
+ * is generous enough that an operator can refresh the dashboard or
+ * step away briefly and reattach to the same `claude` REPL, while
+ * still bounding leaked sessions to a single working hour at most.
  */
-export const SESSION_IDLE_MS = 10 * 60 * 1000;
+export const SESSION_IDLE_MS = 30 * 60 * 1000;
 /** Output ring-buffer size. Lets a freshly-attached stream replay recent output. */
 export const SCROLLBACK_BYTES = 64 * 1024;
 

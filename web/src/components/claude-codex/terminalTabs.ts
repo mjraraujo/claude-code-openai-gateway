@@ -23,6 +23,15 @@ export interface TerminalTab {
    * a re-render of `TerminalTabs` mounts the right component.
    */
   kind: TerminalTabKind;
+  /**
+   * Server-side PTY id this tab is currently bound to (claude tabs
+   * only). Persisted across page reloads in `localStorage` so a
+   * refresh can reattach to the same `claude` REPL instead of
+   * spawning a fresh one. May be undefined for a brand-new tab that
+   * hasn't received its session id yet, or for any "shell" tab
+   * (the non-interactive shell has no persistent server state).
+   */
+  sessionId?: string;
 }
 
 export type TerminalTabKind = "claude" | "shell";
@@ -113,4 +122,104 @@ export function renameTab(state: TabsState, id: string, label: string): TabsStat
   if (!clean) return state;
   const tabs = state.tabs.map((t) => (t.id === id ? { ...t, label: clean } : t));
   return { ...state, tabs };
+}
+
+/**
+ * Attach (or clear) the server-side PTY session id for a tab. Used
+ * when {@link import("./ClaudeTerminalView").default} either creates
+ * a new session or discovers that its previously-persisted session
+ * is gone (so we can fall back to spawning a fresh one).
+ */
+export function setTabSessionId(
+  state: TabsState,
+  id: string,
+  sessionId: string | undefined,
+): TabsState {
+  let changed = false;
+  const tabs = state.tabs.map((t) => {
+    if (t.id !== id) return t;
+    if (t.sessionId === sessionId) return t;
+    changed = true;
+    if (sessionId === undefined) {
+      const { sessionId: _drop, ...rest } = t;
+      void _drop;
+      return rest as TerminalTab;
+    }
+    return { ...t, sessionId };
+  });
+  return changed ? { ...state, tabs } : state;
+}
+
+/* -------- Persistence (localStorage) ----------------------------- */
+
+/**
+ * Storage key for the persisted tab list. Single-user dashboard so
+ * one global key is fine; if we ever support multiple workspaces
+ * the suffix can carry the workspace root.
+ */
+export const TABS_STORAGE_KEY = "claude-codex.terminal.tabs";
+
+/**
+ * Pure parser for the persisted blob — exported for tests so we can
+ * exercise the validation without touching `window`. Drops anything
+ * that doesn't look like a {@link TabsState}; never throws.
+ */
+export function parseTabsState(raw: string | null): TabsState | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Record<string, unknown>;
+  const tabsRaw = obj.tabs;
+  const activeId = obj.activeId;
+  const nextLabelN = obj.nextLabelN;
+  if (!Array.isArray(tabsRaw)) return null;
+  if (typeof activeId !== "string") return null;
+  if (typeof nextLabelN !== "number" || !Number.isFinite(nextLabelN)) return null;
+  const tabs: TerminalTab[] = [];
+  for (const t of tabsRaw) {
+    if (!t || typeof t !== "object") continue;
+    const o = t as Record<string, unknown>;
+    if (typeof o.id !== "string" || typeof o.label !== "string") continue;
+    if (o.kind !== "claude" && o.kind !== "shell") continue;
+    const tab: TerminalTab = {
+      id: o.id,
+      label: o.label.slice(0, 40),
+      kind: o.kind,
+    };
+    if (typeof o.sessionId === "string") tab.sessionId = o.sessionId;
+    tabs.push(tab);
+  }
+  if (tabs.length === 0) return null;
+  if (tabs.length > MAX_TERMINALS) tabs.length = MAX_TERMINALS;
+  // The persisted activeId must point at a surviving tab; if not,
+  // fall back to the first one rather than dropping the whole state.
+  const active = tabs.some((t) => t.id === activeId) ? activeId : tabs[0].id;
+  return {
+    tabs,
+    activeId: active,
+    nextLabelN: Math.max(2, Math.floor(nextLabelN)),
+  };
+}
+
+export function loadTabsState(): TabsState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return parseTabsState(window.localStorage.getItem(TABS_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+export function saveTabsState(state: TabsState): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    /* QuotaExceeded / private mode — degrade silently */
+  }
 }

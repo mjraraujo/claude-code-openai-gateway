@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 
 import { TerminalView } from "./TerminalView";
@@ -8,9 +8,12 @@ import {
   addTab,
   closeTab,
   initialTabsState,
+  loadTabsState,
   MAX_TERMINALS,
   renameTab,
+  saveTabsState,
   selectTab,
+  setTabSessionId,
   type TabsState,
   type TerminalTabKind,
 } from "./terminalTabs";
@@ -34,17 +37,33 @@ const ClaudeTerminalView = dynamic(() => import("./ClaudeTerminalView"), {
  * cancelled when the operator peeks at another shell's history, and
  * the Claude PTY scrollback survives tab switches.
  *
- * Tab 0 defaults to an interactive `claude-codex` PTY (powered by
- * `node-pty` + xterm.js, served via `/api/pty/*`). The "+" button
- * adds a non-interactive shell tab; "+ claude" adds another
- * interactive tab.
- *
- * Pure tab-state lives in `terminalTabs.ts`; this component just
- * wires those helpers into `useState` and renders the chrome.
+ * Tab list (and per-tab PTY session id) is persisted in localStorage
+ * via `saveTabsState`, so a page reload restores the same tabs and
+ * each `claude` tab reattaches to its existing server-side PTY
+ * instead of spawning a fresh `claude` REPL.
  */
 export function TerminalTabs() {
+  // SSR-safe seed. We hydrate from localStorage in an effect so the
+  // server and client first render agree.
   const [state, setState] = useState<TabsState>(initialTabsState);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Restore once on mount (browser only). If nothing is persisted,
+  // keep the initial single-claude tab from `initialTabsState`.
+  useEffect(() => {
+    const persisted = loadTabsState();
+    if (persisted) setState(persisted);
+    setHydrated(true);
+  }, []);
+
+  // Persist on every change after hydration. Skipping pre-hydration
+  // saves means we don't overwrite the persisted blob with the
+  // SSR-time default before we've had a chance to read it.
+  useEffect(() => {
+    if (!hydrated) return;
+    saveTabsState(state);
+  }, [hydrated, state]);
 
   const onAdd = useCallback(
     (kind: TerminalTabKind = "shell") =>
@@ -61,6 +80,11 @@ export function TerminalTabs() {
   );
   const onRename = useCallback(
     (id: string, label: string) => setState((s) => renameTab(s, id, label)),
+    [],
+  );
+  const onSession = useCallback(
+    (tabId: string, sessionId: string | undefined) =>
+      setState((s) => setTabSessionId(s, tabId, sessionId)),
     [],
   );
 
@@ -182,7 +206,11 @@ export function TerminalTabs() {
             }
           >
             {t.kind === "claude" ? (
-              <ClaudeTerminalView kind="claude" />
+              <ClaudeTerminalView
+                kind="claude"
+                persistedSessionId={t.sessionId}
+                onSession={(sid) => onSession(t.id, sid)}
+              />
             ) : (
               <TerminalView />
             )}

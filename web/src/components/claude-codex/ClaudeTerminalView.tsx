@@ -10,6 +10,21 @@ import type { PtyKind } from "@/lib/pty/policy";
 interface ClaudeTerminalViewProps {
   /** Which binary the PTY should spawn. Defaults to "claude". */
   kind?: PtyKind;
+  /**
+   * Server-side PTY session id this view should try to reattach to
+   * before falling back to spawning a fresh session. Set by the
+   * parent {@link import("./TerminalTabs").TerminalTabs} from
+   * persisted state so a page reload reattaches to the same `claude`
+   * REPL instead of starting a new one.
+   */
+  persistedSessionId?: string;
+  /**
+   * Notifies the parent of the session id this view ended up bound
+   * to (or `undefined` if the underlying PTY had to be torn down).
+   * The parent persists it to localStorage so the next reload can
+   * reattach.
+   */
+  onSession?: (sessionId: string | undefined) => void;
 }
 
 interface SessionInfo {
@@ -18,6 +33,8 @@ interface SessionInfo {
   cols: number;
   rows: number;
   label?: string;
+  /** Set by the server when the underlying PTY has already exited. */
+  exited?: boolean;
 }
 
 type Status =
@@ -46,6 +63,8 @@ type Status =
  */
 export default function ClaudeTerminalView({
   kind = "claude",
+  persistedSessionId,
+  onSession,
 }: ClaudeTerminalViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -53,6 +72,14 @@ export default function ClaudeTerminalView({
   const sessionRef = useRef<SessionInfo | null>(null);
   const inputAbortRef = useRef<AbortController | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
+  // Capture persistence inputs in refs so the parent updating
+  // `persistedSessionId` (which we ourselves trigger via
+  // `onSession`) doesn't tear down and re-mount the PTY.
+  const persistedRef = useRef<string | undefined>(persistedSessionId);
+  const onSessionRef = useRef<typeof onSession>(onSession);
+  useEffect(() => {
+    onSessionRef.current = onSession;
+  }, [onSession]);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   const sendInput = useCallback(async (data: string) => {
@@ -123,33 +150,64 @@ export default function ClaudeTerminalView({
 
     let cancelled = false;
     (async () => {
+      const persisted = persistedRef.current;
       try {
-        const res = await fetch("/api/pty", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            kind,
-            cols: term.cols,
-            rows: term.rows,
-          }),
-        });
-        if (!res.ok) {
-          // The route returns `{ error: "...", detail?: "..." }` —
-          // rename for readability so the nested `detail.detail`
-          // chain doesn't read like a typo.
-          const errBody = (await res.json().catch(() => ({}))) as {
-            error?: string;
-            detail?: string;
-          };
-          const msg =
-            errBody.error === "unsupported"
-              ? `interactive terminal unavailable: ${errBody.detail ?? "node-pty not installed"}`
-              : `pty create failed (${res.status}): ${errBody.error ?? ""}`;
-          throw new Error(msg);
+        // 1. If the parent gave us a persisted session id, try to
+        //    reattach before spawning. This is what makes a browser
+        //    refresh land back in the same `claude` REPL instead of
+        //    a fresh one. A 404 means the server already reaped the
+        //    session (idle timeout) and we should fall through to
+        //    POST /api/pty.
+        let session: SessionInfo | null = null;
+        if (persisted) {
+          try {
+            const res = await fetch(`/api/pty/${persisted}`, {
+              cache: "no-store",
+            });
+            if (res.ok) {
+              const body = (await res.json()) as { session: SessionInfo };
+              if (!body.session.exited) session = body.session;
+            }
+          } catch {
+            /* network blip — fall through to POST */
+          }
         }
-        const { session } = (await res.json()) as { session: SessionInfo };
+
+        if (!session) {
+          const res = await fetch("/api/pty", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              kind,
+              cols: term.cols,
+              rows: term.rows,
+            }),
+          });
+          if (!res.ok) {
+            // The route returns `{ error: "...", detail?: "..." }` —
+            // rename for readability so the nested `detail.detail`
+            // chain doesn't read like a typo.
+            const errBody = (await res.json().catch(() => ({}))) as {
+              error?: string;
+              detail?: string;
+            };
+            const msg =
+              errBody.error === "unsupported"
+                ? `interactive terminal unavailable: ${errBody.detail ?? "node-pty not installed"}`
+                : `pty create failed (${res.status}): ${errBody.error ?? ""}`;
+            throw new Error(msg);
+          }
+          session = ((await res.json()) as { session: SessionInfo }).session;
+        }
+
         if (cancelled) return;
         sessionRef.current = session;
+        // Push the (possibly new) session id back up to the parent
+        // so it can persist for the next reload.
+        if (session.id !== persisted) {
+          persistedRef.current = session.id;
+          onSessionRef.current?.(session.id);
+        }
         setStatus({ kind: "running", sessionId: session.id });
         attachStream(session.id);
       } catch (err) {
@@ -157,6 +215,12 @@ export default function ClaudeTerminalView({
           const message = (err as Error).message;
           term.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`);
           setStatus({ kind: "error", message });
+          // Forget the dead session id so the next mount tries to
+          // create fresh rather than chase a 404 again.
+          if (persisted) {
+            persistedRef.current = undefined;
+            onSessionRef.current?.(undefined);
+          }
         }
       }
     })();

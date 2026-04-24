@@ -138,3 +138,31 @@ describe("toRelative", () => {
     expect(m.toRelative(path.join(workspace, "a", "b.txt"))).toBe("a/b.txt");
   });
 });
+
+describe("isIgnoredRelPath", () => {
+  it("rejects empty / undefined inputs as 'not ignored'", async () => {
+    const m = await importMod();
+    expect(m.isIgnoredRelPath("")).toBe(false);
+  });
+
+  it("flags entries inside known noisy build dirs", async () => {
+    const m = await importMod();
+    expect(m.isIgnoredRelPath("node_modules/foo/bar.js")).toBe(true);
+    expect(m.isIgnoredRelPath(".git/HEAD")).toBe(true);
+    expect(m.isIgnoredRelPath(".next/cache/x")).toBe(true);
+    expect(m.isIgnoredRelPath("dist")).toBe(true);
+  });
+
+  it("flags hidden entries except .github (mirrors tree route)", async () => {
+    const m = await importMod();
+    expect(m.isIgnoredRelPath(".env")).toBe(true);
+    expect(m.isIgnoredRelPath("src/.DS_Store")).toBe(true);
+    expect(m.isIgnoredRelPath(".github/workflows/ci.yml")).toBe(false);
+  });
+
+  it("does not flag normal source paths", async () => {
+    const m = await importMod();
+    expect(m.isIgnoredRelPath("src/index.ts")).toBe(false);
+    expect(m.isIgnoredRelPath("README.md")).toBe(false);
+  });
+});

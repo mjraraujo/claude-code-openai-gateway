@@ -5,6 +5,7 @@ import path from "node:path";
 import { isSessionAuthenticated } from "@/lib/auth/session";
 import {
   assertInsideWorkspace,
+  IGNORED_NAMES,
   safeJoin,
   toRelative,
   WORKSPACE_ROOT,
@@ -20,16 +21,7 @@ interface TreeNode {
   children?: TreeNode[];
 }
 
-const IGNORE = new Set([
-  ".git",
-  "node_modules",
-  ".next",
-  ".turbo",
-  ".cache",
-  "dist",
-  "build",
-  "coverage",
-]);
+const IGNORE = IGNORED_NAMES;
 
 const MAX_DEPTH = 4;
 const MAX_ENTRIES_PER_DIR = 200;
