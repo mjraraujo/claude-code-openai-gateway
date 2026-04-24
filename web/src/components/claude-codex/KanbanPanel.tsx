@@ -95,6 +95,15 @@ export function KanbanPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
+  const workspaceScopedCount = activeWorkspace
+    ? tasks.filter((task) => task.workspaceId === activeWorkspace.id).length
+    : 0;
+  const sharedQueueCount = tasks.filter((task) => !task.workspaceId).length;
+  const crossWorkspaceCount = activeWorkspace
+    ? tasks.filter((task) => !!task.workspaceId && task.workspaceId !== activeWorkspace.id)
+        .length
+    : 0;
+  const flowPressure = boardStats.active + boardStats.review;
       if (!res.ok) throw new Error(`harness patch failed (${res.status})`);
     } catch (err) {
       setError((err as Error).message);
@@ -239,6 +248,17 @@ export function KanbanPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "start", goal: task.title, maxSteps: 8 }),
+      <div className="rounded-md border border-zinc-900 bg-zinc-950/60 px-2.5 py-2 text-[10px] text-zinc-400">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>workspace queue: {workspaceScopedCount}</span>
+          <span>shared queue: {sharedQueueCount}</span>
+          <span>other workspaces: {crossWorkspaceCount}</span>
+          <span className="ml-auto text-zinc-500">
+            flow pressure:{" "}
+            {flowPressure >= 6 ? "high" : flowPressure >= 3 ? "steady" : "light"}
+          </span>
+        </div>
+      </div>
       });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
