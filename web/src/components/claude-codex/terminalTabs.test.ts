@@ -5,8 +5,10 @@ import {
   closeTab,
   initialTabsState,
   MAX_TERMINALS,
+  parseTabsState,
   renameTab,
   selectTab,
+  setTabSessionId,
 } from "./terminalTabs";
 
 describe("terminalTabs state", () => {
@@ -104,5 +106,84 @@ describe("terminalTabs state", () => {
     expect(s.tabs[0].label).toHaveLength(40);
     const before = s;
     expect(renameTab(s, s.tabs[0].id, "   ")).toBe(before);
+  });
+
+  it("setTabSessionId attaches and clears the persisted PTY id", () => {
+    let s = initialTabsState();
+    const id = s.tabs[0].id;
+    s = setTabSessionId(s, id, "pty-abc");
+    expect(s.tabs[0].sessionId).toBe("pty-abc");
+    // Idempotent — setting the same id is a no-op (same reference).
+    expect(setTabSessionId(s, id, "pty-abc")).toBe(s);
+    s = setTabSessionId(s, id, undefined);
+    expect(s.tabs[0]).not.toHaveProperty("sessionId");
+  });
+
+  it("setTabSessionId on an unknown tab is a structural no-op", () => {
+    const s = initialTabsState();
+    expect(setTabSessionId(s, "ghost", "x")).toBe(s);
+  });
+});
+
+describe("parseTabsState", () => {
+  it("returns null for null / empty / non-JSON / wrong shape", () => {
+    expect(parseTabsState(null)).toBeNull();
+    expect(parseTabsState("")).toBeNull();
+    expect(parseTabsState("not json")).toBeNull();
+    expect(parseTabsState("[]")).toBeNull();
+    expect(parseTabsState(JSON.stringify({ tabs: "x" }))).toBeNull();
+  });
+
+  it("round-trips a valid persisted blob", () => {
+    const raw = JSON.stringify({
+      tabs: [
+        { id: "term-1", label: "claude", kind: "claude", sessionId: "pty-1" },
+        { id: "term-2", label: "Shell 2", kind: "shell" },
+      ],
+      activeId: "term-2",
+      nextLabelN: 3,
+    });
+    const out = parseTabsState(raw);
+    expect(out).toEqual({
+      tabs: [
+        { id: "term-1", label: "claude", kind: "claude", sessionId: "pty-1" },
+        { id: "term-2", label: "Shell 2", kind: "shell" },
+      ],
+      activeId: "term-2",
+      nextLabelN: 3,
+    });
+  });
+
+  it("falls back to the first tab when activeId is stale", () => {
+    const raw = JSON.stringify({
+      tabs: [{ id: "term-1", label: "claude", kind: "claude" }],
+      activeId: "ghost",
+      nextLabelN: 2,
+    });
+    const out = parseTabsState(raw);
+    expect(out?.activeId).toBe("term-1");
+  });
+
+  it("drops malformed tabs but keeps the rest", () => {
+    const raw = JSON.stringify({
+      tabs: [
+        { id: "ok", label: "claude", kind: "claude" },
+        { id: 5, label: "x", kind: "shell" },
+        { id: "bad-kind", label: "x", kind: "elixir" },
+      ],
+      activeId: "ok",
+      nextLabelN: 2,
+    });
+    const out = parseTabsState(raw);
+    expect(out?.tabs.map((t) => t.id)).toEqual(["ok"]);
+  });
+
+  it("returns null when no valid tabs survive validation", () => {
+    const raw = JSON.stringify({
+      tabs: [{ id: 1, label: "x", kind: "shell" }],
+      activeId: "ok",
+      nextLabelN: 2,
+    });
+    expect(parseTabsState(raw)).toBeNull();
   });
 });

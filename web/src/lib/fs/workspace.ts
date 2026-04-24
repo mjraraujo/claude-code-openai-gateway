@@ -147,6 +147,46 @@ export async function safeJoin(
   }
 }
 
+/**
+ * Directory / file names that the dashboard's filesystem surface
+ * (tree listing, real-time watcher, create/rename endpoints) refuses
+ * to traffic in. These are noisy build outputs and VCS metadata that
+ * the operator never wants to see, and watching them would flood the
+ * SSE stream with churn from `next dev` rebuilds or `npm install`.
+ *
+ * Centralised here so the tree route, the SSE watcher and the
+ * mutation endpoints all apply the same rule.
+ */
+export const IGNORED_NAMES: ReadonlySet<string> = new Set([
+  ".git",
+  "node_modules",
+  ".next",
+  ".turbo",
+  ".cache",
+  "dist",
+  "build",
+  "coverage",
+]);
+
+/**
+ * True if a workspace-relative POSIX path traverses through an
+ * ignored directory (or *is* an ignored entry). Pure helper —
+ * exported for tests and reused by the SSE watcher to drop noisy
+ * events without re-implementing the rule.
+ */
+export function isIgnoredRelPath(rel: string): boolean {
+  if (typeof rel !== "string" || rel === "") return false;
+  const segments = rel.split("/").filter((s) => s.length > 0);
+  for (const seg of segments) {
+    if (IGNORED_NAMES.has(seg)) return true;
+    // Hidden entries are also hidden by the tree route (except .github);
+    // mirror that here so create/watch behaviour matches what the user
+    // sees in the explorer.
+    if (seg.startsWith(".") && seg !== ".github") return true;
+  }
+  return false;
+}
+
 function isInside(root: string, target: string): boolean {
   const rel = path.relative(root, target);
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
