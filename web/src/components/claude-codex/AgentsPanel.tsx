@@ -52,6 +52,15 @@ export function AgentsPanel() {
     });
     es.onerror = () => {
       // EventSource auto-reconnects; nothing to do here.
+  const deliveryLoad = useMemo(() => {
+    const activeAgents = agents.filter((agent) => agent.status === "active").length;
+    const liveTasks = (state?.tasks ?? []).filter(
+      (task) => task.column === "active" || task.column === "review",
+    ).length;
+    const perAgent =
+      activeAgents === 0 ? liveTasks : Number((liveTasks / activeAgents).toFixed(1));
+    return { liveTasks, activeAgents, perAgent };
+  }, [agents, state?.tasks]);
     };
     return () => es.close();
   }, []);
@@ -126,6 +135,10 @@ export function AgentsPanel() {
 
   const onAutoDriveClick = () => {
     if (currentRun) {
+          <p className="mt-1 text-[10px] text-zinc-500">
+            delivery load: {deliveryLoad.liveTasks} live cards /{" "}
+            {deliveryLoad.activeAgents} active agents ({deliveryLoad.perAgent} each)
+          </p>
       void stopAutoDrive(setBusy, setError);
     } else {
       setShowAutoDriveModal(true);
