@@ -1,28 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
+import { useNavigationStateContext } from "./NavigationStateProvider";
 import { AgentsPanel } from "./AgentsPanel";
 import { AmigosPanel } from "./AmigosPanel";
 import { KanbanPanel } from "./KanbanPanel";
 import { StatusBar } from "./StatusBar";
 import { WorkspaceCenter } from "./WorkspaceCenter";
+import { type MobileTab } from "./navigationState";
 
 /**
  * Mobile-first single-pane shell.
  *
  * Renders one of the existing Claude Codex panels at a time, picked
  * via a bottom tab bar. The panels themselves are reused unchanged —
- * they all subscribe to the same `/api/runtime/state` SSE stream, so
- * switching tabs does not re-fetch state and does not interrupt any
- * in-flight Auto Drive run.
- *
- * The bottom bar uses `pb-[env(safe-area-inset-bottom)]` so it clears
- * the iOS home indicator when the page is added to the home screen.
- */
-type MobileTab = "tasks" | "workspace" | "amigos" | "agents";
+function setVisitedOnTab(
+  tab: MobileTab,
+  setVisited: Dispatch<SetStateAction<Set<MobileTab>>>,
+) {
+  setVisited((prev) => {
+    if (prev.has(tab)) return prev;
+    const next = new Set(prev);
+    next.add(tab);
+    return next;
+  });
+}
+  const { state, setMobileTab } = useNavigationStateContext();
+  const tab = state.mobileTab;
+    () => new Set<MobileTab>([tab]),
+  useEffect(() => {
+    setVisitedOnTab(tab, setVisited);
+  }, [tab]);
 
-const TABS: { id: MobileTab; label: string; icon: string }[] = [
+    setMobileTab(id);
+    setVisitedOnTab(id, setVisited);
   { id: "tasks", label: "Tasks", icon: "▤" },
   { id: "workspace", label: "Workspace", icon: "▣" },
   { id: "amigos", label: "Amigos", icon: "✦" },
