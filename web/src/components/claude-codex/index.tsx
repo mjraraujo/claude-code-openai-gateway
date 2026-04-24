@@ -8,10 +8,15 @@ import { AgentsPanel } from "./AgentsPanel";
 import { ChatDock } from "./ChatDock";
 import { KanbanPanel } from "./KanbanPanel";
 import { MobileShell } from "./MobileShell";
+import {
+  NavigationStateProvider,
+  useNavigationStateContext,
+} from "./NavigationStateProvider";
 import { SplitPane, clampSize } from "./SplitPane";
 import { StatusBar } from "./StatusBar";
 import { TerminalTabs } from "./TerminalTabs";
 import { WorkspaceCenter } from "./WorkspaceCenter";
+import { type RightTab } from "./navigationState";
 
 /**
  * Claude Codex desktop shell.
@@ -32,7 +37,6 @@ const LS_KEYS = {
   leftCollapsed: "mc.layout.leftCollapsed",
   rightSize: "mc.layout.rightSize",
   rightCollapsed: "mc.layout.rightCollapsed",
-  rightTab: "mc.layout.rightTab",
   workspaceHeight: "mc.layout.workspaceHeight",
   terminalCollapsed: "mc.layout.terminalCollapsed",
 } as const;
@@ -54,8 +58,6 @@ const BOUNDS = {
 
 const COLLAPSED_RAIL_WIDTH = 28;
 const COLLAPSED_TERMINAL_HEIGHT = 28;
-
-type RightTab = "agents" | "chat";
 
 function readNumber(key: string, fallback: number): number {
   if (typeof window === "undefined") return fallback;
@@ -80,16 +82,6 @@ function readBool(key: string, fallback: boolean): boolean {
   }
 }
 
-function readTab(fallback: RightTab): RightTab {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(LS_KEYS.rightTab);
-    return raw === "agents" || raw === "chat" ? raw : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function writeStorage(key: string, value: string) {
   if (typeof window === "undefined") return;
   try {
@@ -100,7 +92,9 @@ function writeStorage(key: string, value: string) {
 }
 
 export function ClaudeCodex() {
-  // Below the lg (1024px) breakpoint we hand off to the single-pane
+      <NavigationStateProvider>
+        <ClaudeCodexShell />
+      </NavigationStateProvider>
   // bottom-tab shell so the dashboard is usable on phones and small
   // tablets. The desktop resizable shell only renders at >=lg.
   const bp = useBreakpoint();
@@ -122,7 +116,8 @@ function DesktopShell() {
   const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false);
   const [rightSize, setRightSize] = useState<number>(DEFAULTS.rightSize);
   const [rightCollapsed, setRightCollapsed] = useState<boolean>(false);
-  const [rightTab, setRightTab] = useState<RightTab>("agents");
+  const { state: navState, setRightTab: setNavRightTab } = useNavigationStateContext();
+  const rightTab = navState.rightTab;
   const [workspaceHeight, setWorkspaceHeight] = useState<number>(
     DEFAULTS.workspaceHeight,
   );
@@ -145,7 +140,6 @@ function DesktopShell() {
       ),
     );
     setRightCollapsed(readBool(LS_KEYS.rightCollapsed, false));
-    setRightTab(readTab("agents"));
     setWorkspaceHeight(
       Math.max(
         BOUNDS.centerTopMin,
@@ -191,9 +185,8 @@ function DesktopShell() {
     });
   }, []);
   const selectRightTab = useCallback((tab: RightTab) => {
-    setRightTab(tab);
-    writeStorage(LS_KEYS.rightTab, tab);
-  }, []);
+    setNavRightTab(tab);
+  }, [setNavRightTab]);
 
   const left = leftCollapsed ? (
     <CollapsedRail label="Tasks · Sprint" onExpand={toggleLeft} side="left" />

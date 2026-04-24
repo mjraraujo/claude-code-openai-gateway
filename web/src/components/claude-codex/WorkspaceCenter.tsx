@@ -1,16 +1,16 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AmigosPanel } from "./AmigosPanel";
 import { BrowserView } from "./BrowserView";
 import { SideBySideView } from "./SideBySideView";
 import { TerminalTabs } from "./TerminalTabs";
 import { WorkspaceView } from "./WorkspaceView";
+import { useNavigationStateContext } from "./NavigationStateProvider";
+import { type WorkspaceTab } from "./navigationState";
 
-type Tab = "terminal" | "workspace" | "side-by-side" | "browser" | "amigos";
-
-const ALL_TABS: { id: Tab; label: string }[] = [
+const ALL_TABS: { id: WorkspaceTab; label: string }[] = [
   { id: "terminal", label: "Terminal" },
   { id: "workspace", label: "Workspace" },
   { id: "side-by-side", label: "Side-by-Side" },
@@ -30,30 +30,42 @@ export interface WorkspaceCenterProps {
 }
 
 export function WorkspaceCenter({ hideTerminal = false }: WorkspaceCenterProps) {
-  const TABS = hideTerminal ? ALL_TABS.filter((t) => t.id !== "terminal") : ALL_TABS;
-  const [tab, setTab] = useState<Tab>("workspace");
+  const { state, setWorkspaceTab } = useNavigationStateContext();
+  const tab = state.workspaceTab;
+  const tabs = useMemo(() => (hideTerminal ? ALL_TABS.filter((t) => t.id !== "terminal") : ALL_TABS), [hideTerminal]);
   // Track which tabs have been visited so each is mounted lazily on
   // first open (preserves Monaco's lazy-boot behavior) but stays
   // mounted thereafter — switching tabs must not abort an in-flight
   // terminal command or wipe scrollback / open editor buffers.
-  const [visited, setVisited] = useState<Set<Tab>>(
-    () => new Set<Tab>(["workspace"]),
-  );
+  const [visited, setVisited] = useState<Set<WorkspaceTab>>(() => new Set<WorkspaceTab>([tab]));
 
-  const selectTab = useCallback((id: Tab) => {
-    setTab(id);
+  useEffect(() => {
+    if (hideTerminal && tab === "terminal") {
+      setWorkspaceTab("workspace");
+      return;
+    }
+    setVisited((prev) => {
+      if (prev.has(tab)) return prev;
+      const next = new Set(prev);
+      next.add(tab);
+      return next;
+    });
+  }, [hideTerminal, setWorkspaceTab, tab]);
+
+  const selectTab = useCallback((id: WorkspaceTab) => {
+    setWorkspaceTab(id);
     setVisited((prev) => {
       if (prev.has(id)) return prev;
       const next = new Set(prev);
       next.add(id);
       return next;
     });
-  }, []);
+  }, [setWorkspaceTab]);
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-zinc-950">
       <div className="flex items-center gap-1 overflow-x-auto border-b border-zinc-900 bg-black px-3 py-2">
-        {TABS.map((t) => {
+        {tabs.map((t) => {
           const active = tab === t.id;
           return (
             <button
