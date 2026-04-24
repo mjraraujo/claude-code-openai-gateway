@@ -1,13 +1,19 @@
 "use client";
 
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
-import { useNavigationStateContext } from "./NavigationStateProvider";
 import { AgentsPanel } from "./AgentsPanel";
 import { AmigosPanel } from "./AmigosPanel";
 import { KanbanPanel } from "./KanbanPanel";
 import { StatusBar } from "./StatusBar";
 import { WorkspaceCenter } from "./WorkspaceCenter";
+import { useNavigationStateContext } from "./NavigationStateProvider";
 import { type MobileTab } from "./navigationState";
 
 /**
@@ -15,6 +21,24 @@ import { type MobileTab } from "./navigationState";
  *
  * Renders one of the existing Claude Codex panels at a time, picked
  * via a bottom tab bar. The panels themselves are reused unchanged —
+ * they all subscribe to the shared runtime SSE stream via the runtime
+ * provider, so switching tabs does not re-fetch state and does not
+ * interrupt any in-flight Auto Drive run.
+ *
+ * The bottom bar uses `pb-[env(safe-area-inset-bottom)]` so it clears
+ * the iOS home indicator when the page is added to the home screen.
+ *
+ * The active tab lives in the shared `NavigationStateProvider` so it
+ * survives a reload and stays in sync with the desktop right-rail
+ * tab when the breakpoint flips.
+ */
+const TABS: { id: MobileTab; label: string; icon: string }[] = [
+  { id: "tasks", label: "Tasks", icon: "▤" },
+  { id: "workspace", label: "Workspace", icon: "▣" },
+  { id: "amigos", label: "Amigos", icon: "✦" },
+  { id: "agents", label: "Agents", icon: "◆" },
+];
+
 function setVisitedOnTab(
   tab: MobileTab,
   setVisited: Dispatch<SetStateAction<Set<MobileTab>>>,
@@ -26,39 +50,29 @@ function setVisitedOnTab(
     return next;
   });
 }
-  const { state, setMobileTab } = useNavigationStateContext();
-  const tab = state.mobileTab;
-    () => new Set<MobileTab>([tab]),
-  useEffect(() => {
-    setVisitedOnTab(tab, setVisited);
-  }, [tab]);
-
-    setMobileTab(id);
-    setVisitedOnTab(id, setVisited);
-  { id: "tasks", label: "Tasks", icon: "▤" },
-  { id: "workspace", label: "Workspace", icon: "▣" },
-  { id: "amigos", label: "Amigos", icon: "✦" },
-  { id: "agents", label: "Agents", icon: "◆" },
-];
 
 export function MobileShell() {
-  const [tab, setTab] = useState<MobileTab>("workspace");
+  const { state, setMobileTab } = useNavigationStateContext();
+  const tab = state.mobileTab;
+
   // Keep panels mounted once visited so SSE subscriptions, terminal
   // scrollback, and Monaco buffers survive tab switches — same trick
   // WorkspaceCenter uses for its inner tabs.
   const [visited, setVisited] = useState<Set<MobileTab>>(
-    () => new Set<MobileTab>(["workspace"]),
+    () => new Set<MobileTab>([tab]),
   );
 
-  const select = (id: MobileTab) => {
-    setTab(id);
-    setVisited((prev) => {
-      if (prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.add(id);
-      return next;
-    });
-  };
+  useEffect(() => {
+    setVisitedOnTab(tab, setVisited);
+  }, [tab]);
+
+  const select = useCallback(
+    (id: MobileTab) => {
+      setMobileTab(id);
+      setVisitedOnTab(id, setVisited);
+    },
+    [setMobileTab],
+  );
 
   return (
     <div className="flex h-[100dvh] w-screen flex-col bg-black text-zinc-100">

@@ -192,14 +192,6 @@ export function AmigosPanel() {
     () => groupByFeature(visibleReport?.scenarios ?? []),
     [visibleReport],
   );
-  const readinessScore = useMemo(() => {
-    const scenarios = visibleReport?.scenarios ?? [];
-    if (scenarios.length === 0) return 100;
-    const weightedRisk = severitySummary.blocker * 3 + severitySummary.concern * 1;
-    const maxRisk = Math.max(1, scenarios.length * 3);
-    const score = Math.max(0, Math.round(100 - (weightedRisk / maxRisk) * 100));
-    return score;
-  }, [severitySummary.blocker, severitySummary.concern, visibleReport?.scenarios]);
 
   const toggleFeature = useCallback((path: string) => {
     setExpanded((prev) => ({ ...prev, [path]: !prev[path] }));
@@ -240,10 +232,7 @@ export function AmigosPanel() {
       {visibleReport ? (
         <SummaryStrip report={visibleReport} running={!!running} />
       ) : null}
-          <span className="text-zinc-300">readiness score: {readinessScore}%</span>
-              : readinessScore < 80
-                ? "ship with follow-up actions"
-                : "clear to implement"}
+
       {error ? (
         <div className="shrink-0 border-b border-red-900/60 bg-red-950/40 px-3 py-1.5 text-[11px] text-red-200">
           {error}
