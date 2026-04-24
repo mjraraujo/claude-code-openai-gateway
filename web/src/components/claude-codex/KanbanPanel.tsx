@@ -2,8 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import {
+  ApiError,
+  autoDriveClient,
+  harnessClient,
+  tasksClient,
+  useRuntimeSelector,
+  useRuntimeState,
+} from "@/lib/runtime/client";
 import type {
-  RuntimeState,
   SubTask,
   Task,
   TaskColumn,
@@ -38,7 +45,14 @@ const METHODOLOGIES = ["Shape Up", "Scrum", "Kanban", "Spec-First"] as const;
 const DEV_MODES = ["Vibe Code", "Spec Driven"] as const;
 
 export function KanbanPanel() {
-  const [state, setState] = useState<RuntimeState | null>(null);
+  const state = useRuntimeState();
+  // Selectors keep the dropdowns in sync with the persisted harness
+  // (changes from another tab or the Agents panel propagate here).
+  const persistedMethodology = useRuntimeSelector(
+    (s) => s?.harness?.methodology,
+  );
+  const persistedDevMode = useRuntimeSelector((s) => s?.harness?.devMode);
+
   // Local state for the selectors mirrors the persisted harness fields.
   // We initialise from the defaults so the UI renders before the SSE
   // state arrives, then keep them in sync via the effect below.
@@ -50,34 +64,58 @@ export function KanbanPanel() {
   const [addingColumn, setAddingColumn] = useState<TaskColumn>("backlog");
   const [addingTag, setAddingTag] = useState("");
   const [showAdd, setShowAdd] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // Operation-scoped pending state (diagnostic §"Bugs" #3): a single
+  // boolean served as a global gate before, which made it impossible
+  // to tell which mutation was in flight and produced jarring "all
+  // buttons disabled" UI when only one card was being edited. We now
+  // count outstanding operations and treat 0 as idle.
+  const [pendingCount, setPendingCount] = useState(0);
+  const busy = pendingCount > 0;
   const [error, setError] = useState<string | null>(null);
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<TaskColumn | null>(null);
   const addInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Reflect persisted harness picks back into the selectors so the
+  // dropdowns stay coherent across reloads / multi-tab use.
   useEffect(() => {
-    const es = new EventSource("/api/runtime/state");
-    es.addEventListener("state", (ev) => {
-      try {
-        const next = JSON.parse((ev as MessageEvent).data) as RuntimeState;
-        setState(next);
-        // Reflect persisted harness picks back into the selectors so
-        // the dropdowns stay coherent across reloads / multi-tab use.
-        const m = next.harness?.methodology;
-        if (m && (METHODOLOGIES as readonly string[]).includes(m)) {
-          setMethodology(m as (typeof METHODOLOGIES)[number]);
-        }
-        const d = next.harness?.devMode;
-        if (d && (DEV_MODES as readonly string[]).includes(d)) {
-          setDevMode(d as (typeof DEV_MODES)[number]);
-        }
-      } catch {
-        /* ignore */
-      }
-    });
-    return () => es.close();
-  }, []);
+    if (
+      persistedMethodology &&
+      (METHODOLOGIES as readonly string[]).includes(persistedMethodology)
+    ) {
+      setMethodology(persistedMethodology as (typeof METHODOLOGIES)[number]);
+    }
+  }, [persistedMethodology]);
+
+  useEffect(() => {
+    if (
+      persistedDevMode &&
+      (DEV_MODES as readonly string[]).includes(persistedDevMode)
+    ) {
+      setDevMode(persistedDevMode as (typeof DEV_MODES)[number]);
+    }
+  }, [persistedDevMode]);
+
+  /**
+   * Tracks one in-flight mutation. Returns a function to call when it
+   * completes (success or failure). Centralising this guarantees the
+   * pending counter never goes negative and never leaks on throw.
+   */
+  const trackPending = (): (() => void) => {
+    setPendingCount((n) => n + 1);
+    let settled = false;
+    return () => {
+      if (settled) return;
+      settled = true;
+      setPendingCount((n) => Math.max(0, n - 1));
+    };
+  };
+
+  /** Render a thrown value as a user-facing error string. */
+  const messageOf = (err: unknown): string => {
+    if (err instanceof ApiError) return err.message;
+    return (err as Error)?.message ?? String(err);
+  };
 
   /**
    * Persist a methodology / dev-mode change to the harness so the
@@ -89,15 +127,13 @@ export function KanbanPanel() {
     methodology?: string;
     devMode?: string;
   }): Promise<void> => {
+    const done = trackPending();
     try {
-      const res = await fetch("/api/runtime/harness", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) throw new Error(`harness patch failed (${res.status})`);
+      await harnessClient.patch(patch);
     } catch (err) {
-      setError((err as Error).message);
+      setError(messageOf(err));
+    } finally {
+      done();
     }
   };
 
@@ -119,40 +155,30 @@ export function KanbanPanel() {
   const autoDriveCurrent = state?.autoDrive.current;
 
   const moveCard = async (id: string, column: TaskColumn) => {
-    setBusy(true);
+    const done = trackPending();
     setError(null);
     try {
-      const res = await fetch("/api/runtime/tasks", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, column }),
-      });
-      if (!res.ok) throw new Error(`move failed (${res.status})`);
+      await tasksClient.patch({ id, column });
     } catch (err) {
-      setError((err as Error).message);
+      setError(messageOf(err));
     } finally {
-      setBusy(false);
+      done();
     }
   };
 
   const renameCard = async (id: string, title: string): Promise<boolean> => {
     const trimmed = title.trim().slice(0, MAX_TASK_TITLE_LENGTH);
     if (!trimmed) return false;
-    setBusy(true);
+    const done = trackPending();
     setError(null);
     try {
-      const res = await fetch("/api/runtime/tasks", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, title: trimmed }),
-      });
-      if (!res.ok) throw new Error(`rename failed (${res.status})`);
+      await tasksClient.patch({ id, title: trimmed });
       return true;
     } catch (err) {
-      setError((err as Error).message);
+      setError(messageOf(err));
       return false;
     } finally {
-      setBusy(false);
+      done();
     }
   };
 
@@ -160,63 +186,53 @@ export function KanbanPanel() {
     id: string,
     subtasks: SubTask[],
   ): Promise<boolean> => {
-    setBusy(true);
+    const done = trackPending();
     setError(null);
     try {
-      const res = await fetch("/api/runtime/tasks", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, subtasks }),
-      });
-      if (!res.ok) throw new Error(`subtasks failed (${res.status})`);
+      await tasksClient.patch({ id, subtasks });
       return true;
     } catch (err) {
-      setError((err as Error).message);
+      setError(messageOf(err));
       return false;
     } finally {
-      setBusy(false);
+      done();
     }
   };
 
   const deleteCard = async (id: string) => {
-    setBusy(true);
+    const done = trackPending();
     setError(null);
     try {
-      await fetch("/api/runtime/tasks", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
+      // Diagnostic bug #2: previous implementation ignored res.ok and
+      // silently swallowed server-side validation failures. The
+      // tasksClient.remove call now throws ApiError on non-2xx so the
+      // user sees the failure and the card stays put.
+      await tasksClient.remove(id);
     } catch (err) {
-      setError((err as Error).message);
+      setError(messageOf(err));
     } finally {
-      setBusy(false);
+      done();
     }
   };
 
   const addCard = async () => {
     const title = addingTitle.trim();
     if (!title) return;
-    setBusy(true);
+    const done = trackPending();
     setError(null);
     try {
-      const res = await fetch("/api/runtime/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          column: addingColumn,
-          tag: addingTag.trim() || undefined,
-        }),
+      await tasksClient.create({
+        title,
+        column: addingColumn,
+        tag: addingTag.trim() || undefined,
       });
-      if (!res.ok) throw new Error(`create failed (${res.status})`);
       setAddingTitle("");
       setAddingTag("");
       setShowAdd(false);
     } catch (err) {
-      setError((err as Error).message);
+      setError(messageOf(err));
     } finally {
-      setBusy(false);
+      done();
     }
   };
 
@@ -229,32 +245,26 @@ export function KanbanPanel() {
     setError(null);
     try {
       // 1. Move to active sprint while it runs.
-      await fetch("/api/runtime/tasks", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: task.id, column: "active" }),
+      await tasksClient.patch({ id: task.id, column: "active" }).catch(() => {
+        // Best-effort; failure is reported by the auto-drive call below.
       });
       // 2. Start auto-drive with the card title as the goal.
-      const res = await fetch("/api/runtime/auto-drive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "start", goal: task.title, maxSteps: 8 }),
+      const result = await autoDriveClient.start({
+        goal: task.title,
+        maxSteps: 8,
       });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error || `start failed (${res.status})`);
-      }
-      const { run } = (await res.json()) as { run?: { id?: string } };
-      // 3. Record the run id on the card.
-      if (run?.id) {
-        await fetch("/api/runtime/tasks", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: task.id, runId: run.id }),
-        });
+      // 3. Record the run id on the card so the UI can correlate the
+      //    in-flight run to the originating card.
+      const runId = result?.run?.id;
+      if (runId) {
+        await tasksClient
+          .patch({ id: task.id, runId })
+          .catch(() => {
+            // Non-fatal — run is started, the back-reference is cosmetic.
+          });
       }
     } catch (err) {
-      setError((err as Error).message);
+      setError(messageOf(err));
     } finally {
       setRunningTaskId(null);
     }

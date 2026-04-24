@@ -47,6 +47,8 @@ export interface PatchTaskInput {
   subtasks?: SubTask[];
   sprintId?: string | null;
   workspaceId?: string | null;
+  /** Auto-drive run id linked to this card; pass `null` to clear. */
+  runId?: string | null;
 }
 
 export const tasksClient = {
@@ -118,7 +120,7 @@ export const agentsClient = {
   },
   update(input: UpdateAgentInput, signal?: AbortSignal): Promise<{ agent: AgentState } | null> {
     return fetchJson<{ agent: AgentState }>("/api/runtime/agents", {
-      method: "PUT",
+      method: "PATCH",
       body: input,
       signal,
     });

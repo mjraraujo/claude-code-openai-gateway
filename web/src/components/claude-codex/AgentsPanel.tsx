@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  ApiError,
+  agentsClient,
+  autoDriveClient,
+  harnessClient,
+  useRuntimeState,
+} from "@/lib/runtime/client";
 import type {
   AgentState,
   AutoDriveRun,
@@ -9,7 +16,6 @@ import type {
   Department,
   HarnessState,
   RufloPersona,
-  RuntimeState,
 } from "@/lib/runtime";
 import { DEFAULT_MODEL_ID, MODEL_PRESETS, findPreset } from "@/lib/runtime/models";
 
@@ -28,7 +34,7 @@ const ALL_DEPARTMENTS = "__all__";
 const NO_DEPARTMENT = "__none__";
 
 export function AgentsPanel() {
-  const [state, setState] = useState<RuntimeState | null>(null);
+  const state = useRuntimeState();
   const [showAutoDriveModal, setShowAutoDriveModal] = useState(false);
   const [showRunLog, setShowRunLog] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState<Department | null>(null);
@@ -40,21 +46,10 @@ export function AgentsPanel() {
     ALL_DEPARTMENTS,
   );
 
-  // Subscribe to runtime state via SSE.
-  useEffect(() => {
-    const es = new EventSource("/api/runtime/state");
-    es.addEventListener("state", (ev) => {
-      try {
-        setState(JSON.parse((ev as MessageEvent).data) as RuntimeState);
-      } catch {
-        /* ignore */
-      }
-    });
-    es.onerror = () => {
-      // EventSource auto-reconnects; nothing to do here.
-    };
-    return () => es.close();
-  }, []);
+  const messageOf = (err: unknown): string => {
+    if (err instanceof ApiError) return err.message;
+    return (err as Error)?.message ?? String(err);
+  };
 
   const harness = state?.harness;
   const agents = state?.agents ?? [];
@@ -91,14 +86,9 @@ export function AgentsPanel() {
     async (patch: Partial<HarnessState>) => {
       setError(null);
       try {
-        const res = await fetch("/api/runtime/harness", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patch),
-        });
-        if (!res.ok) throw new Error(`harness failed (${res.status})`);
+        await harnessClient.patch(patch);
       } catch (err) {
-        setError((err as Error).message);
+        setError(messageOf(err));
       }
     },
     [],
@@ -108,17 +98,9 @@ export function AgentsPanel() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/runtime/agents", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error || `delete failed (${res.status})`);
-      }
+      await agentsClient.remove(id);
     } catch (err) {
-      setError((err as Error).message);
+      setError(messageOf(err));
     } finally {
       setBusy(false);
     }
@@ -476,17 +458,9 @@ async function startAutoDrive(
   setBusy(true);
   setError(null);
   try {
-    const res = await fetch("/api/runtime/auto-drive", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "start", ...body }),
-    });
-    if (!res.ok) {
-      const j = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(j.error || `start failed (${res.status})`);
-    }
+    await autoDriveClient.start(body);
   } catch (err) {
-    setError((err as Error).message);
+    setError(err instanceof ApiError ? err.message : (err as Error).message);
   } finally {
     setBusy(false);
   }
@@ -499,14 +473,9 @@ async function stopAutoDrive(
   setBusy(true);
   setError(null);
   try {
-    const res = await fetch("/api/runtime/auto-drive", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "stop" }),
-    });
-    if (!res.ok) throw new Error(`stop failed (${res.status})`);
+    await autoDriveClient.stop();
   } catch (err) {
-    setError((err as Error).message);
+    setError(err instanceof ApiError ? err.message : (err as Error).message);
   } finally {
     setBusy(false);
   }
@@ -519,17 +488,9 @@ async function forceStopAutoDrive(
   setBusy(true);
   setError(null);
   try {
-    const res = await fetch("/api/runtime/auto-drive", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "force-stop" }),
-    });
-    if (!res.ok) {
-      const j = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(j.error || `force-stop failed (${res.status})`);
-    }
+    await autoDriveClient.forceStop();
   } catch (err) {
-    setError((err as Error).message);
+    setError(err instanceof ApiError ? err.message : (err as Error).message);
   } finally {
     setBusy(false);
   }
@@ -1189,18 +1150,18 @@ function AgentEditorModal({
       payload.model = modelOverride.trim();
     }
     try {
-      const res = await fetch("/api/runtime/agents", {
-        method: mode === "create" ? "POST" : "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error || `${mode} failed (${res.status})`);
+      if (mode === "create") {
+        await agentsClient.create(
+          payload as unknown as Parameters<typeof agentsClient.create>[0],
+        );
+      } else {
+        await agentsClient.update(
+          payload as unknown as Parameters<typeof agentsClient.update>[0],
+        );
       }
       onClose();
     } catch (err) {
-      onError((err as Error).message);
+      onError(err instanceof ApiError ? err.message : (err as Error).message);
     } finally {
       setBusy(false);
     }
