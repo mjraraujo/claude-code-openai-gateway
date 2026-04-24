@@ -265,8 +265,10 @@ export function KanbanPanel() {
       if (runId) {
         await tasksClient
           .patch({ id: task.id, runId })
-          .catch(() => {
+          .catch((err: unknown) => {
             // Non-fatal — run is started, the back-reference is cosmetic.
+            // Log for debuggability so silent UI drift is investigable.
+            console.warn("Failed to link run to task:", err);
           });
       }
       // Surface a column-move failure now that the rest of the flow

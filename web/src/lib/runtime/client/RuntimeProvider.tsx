@@ -158,6 +158,10 @@ export function useRuntimeConnectionStatus(): RuntimeConnectionStatus {
 /** Returns a derived value from the runtime state. */
 export function useRuntimeSelector<T>(selector: (state: RuntimeState | null) => T): T {
   const state = useRuntimeState();
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- selector is intentionally not a dep
+  // The `selector` argument is intentionally omitted from the deps:
+  // forcing every consumer to `useCallback` its selector would be
+  // noisy, and selector-identity changes between renders are safe
+  // because we only need to recompute when `state` itself changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => selector(state), [state]);
 }
