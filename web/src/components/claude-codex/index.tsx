@@ -12,6 +12,12 @@ import { SplitPane, clampSize } from "./SplitPane";
 import { StatusBar } from "./StatusBar";
 import { TerminalTabs } from "./TerminalTabs";
 import { WorkspaceCenter } from "./WorkspaceCenter";
+import {
+  DEFAULT_LAYOUT_STATE,
+  LAYOUT_BOUNDS,
+  loadLayoutState,
+  saveLayoutState,
+} from "./layoutState";
 
 /**
  * Claude Codex desktop shell.
@@ -23,115 +29,94 @@ import { WorkspaceCenter } from "./WorkspaceCenter";
  *
  * The MobileShell (single-pane bottom-tab nav) is unchanged at < lg.
  *
- * All split sizes and collapsed flags persist to localStorage under
- * the namespaced keys below so the layout survives reloads.
+ * All split sizes and collapsed flags persist through `layoutState`
+ * helpers so parsing/validation stays centralized and typed.
  */
 
-const LS_KEYS = {
-  leftSize: "mc.layout.leftSize",
-  leftCollapsed: "mc.layout.leftCollapsed",
-  rightSize: "mc.layout.rightSize",
-  rightCollapsed: "mc.layout.rightCollapsed",
-  rightTab: "mc.layout.rightTab",
-  workspaceHeight: "mc.layout.workspaceHeight",
-  terminalCollapsed: "mc.layout.terminalCollapsed",
-} as const;
 
-const DEFAULTS = {
-  leftSize: 280,
-  rightSize: 320,
-  workspaceHeight: 520,
-} as const;
-
-const BOUNDS = {
-  leftMin: 200,
-  leftMax: 520,
-  rightMin: 240,
-  rightMax: 560,
-  centerTopMin: 200,
-  centerTopMax: 2000,
-} as const;
-
-const COLLAPSED_RAIL_WIDTH = 28;
-const COLLAPSED_TERMINAL_HEIGHT = 28;
-
-type RightTab = "agents" | "chat";
-
-function readNumber(key: string, fallback: number): number {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (raw === null) return fallback;
-    const n = Number.parseFloat(raw);
-    return Number.isFinite(n) ? n : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function readBool(key: string, fallback: boolean): boolean {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (raw === null) return fallback;
-    return raw === "1" || raw === "true";
-  } catch {
-    return fallback;
-  }
-}
-
-function readTab(fallback: RightTab): RightTab {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(LS_KEYS.rightTab);
-    return raw === "agents" || raw === "chat" ? raw : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStorage(key: string, value: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    /* quota / private mode — ignore */
-  }
-}
-
-export function ClaudeCodex() {
-  // Below the lg (1024px) breakpoint we hand off to the single-pane
-  // bottom-tab shell so the dashboard is usable on phones and small
-  // tablets. The desktop resizable shell only renders at >=lg.
-  const bp = useBreakpoint();
-  if (bp === "mobile") {
-    return <MobileShell />;
-  }
-  return <DesktopShell />;
-}
-
-function DesktopShell() {
-  // We need a render after mount before reading from localStorage so
-  // the server-rendered HTML matches the first client paint (we'd
-  // otherwise hydrate with whatever the user stored, which the
-  // server can't know). Until `hydrated` is true we render with the
-  // documented defaults — the layout flips into place on the next
-  // commit, which is imperceptible.
-  const [hydrated, setHydrated] = useState(false);
-  const [leftSize, setLeftSize] = useState<number>(DEFAULTS.leftSize);
-  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false);
-  const [rightSize, setRightSize] = useState<number>(DEFAULTS.rightSize);
-  const [rightCollapsed, setRightCollapsed] = useState<boolean>(false);
-  const [rightTab, setRightTab] = useState<RightTab>("agents");
-  const [workspaceHeight, setWorkspaceHeight] = useState<number>(
-    DEFAULTS.workspaceHeight,
+  const [leftSize, setLeftSize] = useState<number>(DEFAULT_LAYOUT_STATE.leftSize);
+  const [rightSize, setRightSize] = useState<number>(DEFAULT_LAYOUT_STATE.rightSize);
+    DEFAULT_LAYOUT_STATE.workspaceHeight,
+    const saved = loadLayoutState() ?? DEFAULT_LAYOUT_STATE;
+    setLeftSize(saved.leftSize);
+    setLeftCollapsed(saved.leftCollapsed);
+    setRightSize(saved.rightSize);
+    setRightCollapsed(saved.rightCollapsed);
+    setWorkspaceHeight(saved.workspaceHeight);
+    setTerminalCollapsed(saved.terminalCollapsed);
+    setLeftSize((prev) => {
+      const next = Math.round(s);
+      saveLayoutState({
+        leftSize: next,
+        leftCollapsed,
+        rightSize,
+        rightCollapsed,
+        workspaceHeight,
+        terminalCollapsed,
+      });
+      return next;
+    });
+  }, [leftCollapsed, rightCollapsed, rightSize, terminalCollapsed, workspaceHeight]);
+    setRightSize(() => {
+      const next = Math.round(s);
+      saveLayoutState({
+        leftSize,
+        leftCollapsed,
+        rightSize: next,
+        rightCollapsed,
+        workspaceHeight,
+        terminalCollapsed,
+      });
+      return next;
+    });
+  }, [leftCollapsed, leftSize, rightCollapsed, terminalCollapsed, workspaceHeight]);
+    setWorkspaceHeight(() => {
+      const next = Math.round(s);
+      saveLayoutState({
+        leftSize,
+        leftCollapsed,
+        rightSize,
+        rightCollapsed,
+        workspaceHeight: next,
+        terminalCollapsed,
+      });
+      return next;
+    });
+  }, [leftCollapsed, leftSize, rightCollapsed, rightSize, terminalCollapsed]);
+      saveLayoutState({
+        leftSize,
+        leftCollapsed: next,
+        rightSize,
+        rightCollapsed,
+        workspaceHeight,
+        terminalCollapsed,
+      });
+  }, [leftSize, rightCollapsed, rightSize, terminalCollapsed, workspaceHeight]);
+      saveLayoutState({
+        leftSize,
+        leftCollapsed,
+        rightSize,
+        rightCollapsed: next,
+        workspaceHeight,
+        terminalCollapsed,
+      });
+  }, [leftCollapsed, leftSize, rightSize, terminalCollapsed, workspaceHeight]);
+      saveLayoutState({
+        leftSize,
+        leftCollapsed,
+        rightSize,
+        rightCollapsed,
+        workspaceHeight,
+        terminalCollapsed: next,
+      });
+  }, [leftCollapsed, leftSize, rightCollapsed, rightSize, workspaceHeight]);
   );
-  const [terminalCollapsed, setTerminalCollapsed] = useState<boolean>(false);
-
-  useEffect(() => {
-    setLeftSize(
-      clampSize(
-        readNumber(LS_KEYS.leftSize, DEFAULTS.leftSize),
+      <SplitPane
+      size={Math.min(workspaceHeight, LAYOUT_BOUNDS.centerTopMax)}
+      minSize={LAYOUT_BOUNDS.centerTopMin}
+      maxSize={LAYOUT_BOUNDS.centerTopMax}
+            minSize={LAYOUT_BOUNDS.leftMin}
+            maxSize={LAYOUT_BOUNDS.leftMax}
         BOUNDS.leftMin,
         BOUNDS.leftMax,
       ),
@@ -334,8 +319,8 @@ function CenterAndRight({
       <SplitPane
         direction="horizontal"
         size={rightSizeUnclamped}
-        minSize={BOUNDS.rightMin}
-        maxSize={BOUNDS.rightMax}
+        minSize={LAYOUT_BOUNDS.rightMin}
+        maxSize={LAYOUT_BOUNDS.rightMax}
         onSizeChange={onRightSize}
         ariaLabel="Resize agents/chat panel"
         className="flex-row-reverse"
