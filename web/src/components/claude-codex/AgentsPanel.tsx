@@ -1135,29 +1135,28 @@ function AgentEditorModal({
     if (!ready) return;
     setBusy(true);
     onError(null);
-    const payload: Record<string, unknown> = {
-      name: name.trim(),
-      department: department.trim(),
-      skill: skill.trim(),
-    };
-    // For edits, an empty string means "clear the override". The API
-    // accepts `null` as an explicit clear; the empty string here is
-    // serialised to `""` which the route also treats as clear.
-    if (mode === "edit") {
-      payload.id = agent!.id;
-      payload.model = modelOverride.trim() ? modelOverride.trim() : null;
-    } else if (modelOverride.trim()) {
-      payload.model = modelOverride.trim();
-    }
+    const trimmedName = name.trim();
+    const trimmedDept = department.trim();
+    const trimmedSkill = skill.trim();
+    const trimmedModel = modelOverride.trim();
     try {
-      if (mode === "create") {
-        await agentsClient.create(
-          payload as unknown as Parameters<typeof agentsClient.create>[0],
-        );
+      if (mode === "edit") {
+        // For edits, an empty model string means "clear the override".
+        // The API accepts `null` as an explicit clear.
+        await agentsClient.update({
+          id: agent!.id,
+          name: trimmedName,
+          department: trimmedDept,
+          skill: trimmedSkill,
+          model: trimmedModel ? trimmedModel : null,
+        });
       } else {
-        await agentsClient.update(
-          payload as unknown as Parameters<typeof agentsClient.update>[0],
-        );
+        await agentsClient.create({
+          name: trimmedName,
+          department: trimmedDept,
+          skill: trimmedSkill,
+          ...(trimmedModel ? { model: trimmedModel } : {}),
+        });
       }
       onClose();
     } catch (err) {

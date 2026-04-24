@@ -130,8 +130,7 @@ function DesktopShell() {
   const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false);
   const [rightSize, setRightSize] = useState<number>(DEFAULTS.rightSize);
   const [rightCollapsed, setRightCollapsed] = useState<boolean>(false);
-  const { state: navState, setRightTab: setNavRightTab } =
-    useNavigationStateContext();
+  const { state: navState, setRightTab } = useNavigationStateContext();
   const rightTab = navState.rightTab;
   const [workspaceHeight, setWorkspaceHeight] = useState<number>(
     DEFAULTS.workspaceHeight,
@@ -201,9 +200,9 @@ function DesktopShell() {
   }, []);
   const selectRightTab = useCallback(
     (tab: RightTab) => {
-      setNavRightTab(tab);
+      setRightTab(tab);
     },
-    [setNavRightTab],
+    [setRightTab],
   );
 
   const left = leftCollapsed ? (

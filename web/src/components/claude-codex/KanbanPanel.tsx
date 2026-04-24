@@ -244,10 +244,16 @@ export function KanbanPanel() {
     setRunningTaskId(task.id);
     setError(null);
     try {
-      // 1. Move to active sprint while it runs.
-      await tasksClient.patch({ id: task.id, column: "active" }).catch(() => {
-        // Best-effort; failure is reported by the auto-drive call below.
-      });
+      // 1. Move to active sprint while it runs. We don't fail-fast on
+      //    a column-patch error — auto-drive can still start — but we
+      //    do remember the message so it surfaces if the user ends up
+      //    looking at a card that's still in its old column.
+      let columnPatchError: string | null = null;
+      try {
+        await tasksClient.patch({ id: task.id, column: "active" });
+      } catch (err) {
+        columnPatchError = messageOf(err);
+      }
       // 2. Start auto-drive with the card title as the goal.
       const result = await autoDriveClient.start({
         goal: task.title,
@@ -262,6 +268,11 @@ export function KanbanPanel() {
           .catch(() => {
             // Non-fatal — run is started, the back-reference is cosmetic.
           });
+      }
+      // Surface a column-move failure now that the rest of the flow
+      // succeeded, so the user knows why the card didn't visibly move.
+      if (columnPatchError) {
+        setError(`run started but column move failed: ${columnPatchError}`);
       }
     } catch (err) {
       setError(messageOf(err));

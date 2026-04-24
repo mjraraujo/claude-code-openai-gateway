@@ -24,7 +24,6 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -156,33 +155,9 @@ export function useRuntimeConnectionStatus(): RuntimeConnectionStatus {
   return useRuntimeContext().status;
 }
 
-/**
- * Select a derived value from the runtime state. The selector is
- * called on every render; if the previous value is `Object.is`-equal
- * the component will not re-render thanks to React's bail-out
- * semantics. For more advanced equality, callers can wrap with
- * `useMemo` themselves.
- *
- *   const tasks = useRuntimeSelector((s) => s?.tasks ?? []);
- */
+/** Returns a derived value from the runtime state. */
 export function useRuntimeSelector<T>(selector: (state: RuntimeState | null) => T): T {
   const state = useRuntimeState();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- selector is intentionally not a dep
   return useMemo(() => selector(state), [state]);
-}
-
-/**
- * Force-refresh by re-creating the EventSource. Almost never needed —
- * EventSource auto-reconnects on its own — but exposed for tests and
- * for the "reconnect" affordance some UIs surface.
- */
-export function useReconnectRuntime(): () => void {
-  const ctx = useRuntimeContext();
-  return useCallback(() => {
-    // Touching status forces React to re-render; the actual reconnect
-    // is owned by the provider's effect cleanup + re-init when `url`
-    // changes. As a no-op-safe fallback we simply ignore here — the
-    // provider does the right thing automatically.
-    void ctx;
-  }, [ctx]);
 }

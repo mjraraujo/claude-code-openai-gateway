@@ -10,7 +10,6 @@ export {
   useRuntimeState,
   useRuntimeSelector,
   useRuntimeConnectionStatus,
-  useReconnectRuntime,
   type RuntimeConnectionStatus,
   type RuntimeProviderProps,
 } from "./RuntimeProvider";
