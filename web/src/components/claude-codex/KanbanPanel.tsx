@@ -84,6 +84,17 @@ export function KanbanPanel() {
    * planner system prompt actually picks it up. Failures surface as
    * the inline error banner — best-effort, the local state still
    * updates so the dropdown reflects the user's intent.
+  const activeWorkspace = state?.workspaces.find(
+    (workspace) => workspace.id === state.activeWorkspaceId,
+  );
+  const boardStats = {
+    backlog: tasks.filter((task) => task.column === "backlog").length,
+    active: tasks.filter((task) => task.column === "active").length,
+    review: tasks.filter((task) => task.column === "review").length,
+    shipped: tasks.filter((task) => task.column === "shipped").length,
+  };
+  const completionPct =
+    tasks.length === 0 ? 0 : Math.round((boardStats.shipped / tasks.length) * 100);
    */
   const patchHarness = async (patch: {
     methodology?: string;
@@ -190,7 +201,21 @@ export function KanbanPanel() {
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      setBusy(false);
+        <div>
+          <h2 className="text-sm font-medium text-zinc-200">Concept Board &amp; Sprints</h2>
+          <p className="mt-0.5 text-[10px] text-zinc-500">
+            {activeWorkspace
+              ? `${activeWorkspace.name} · ${completionPct}% shipped`
+              : "workspace loading…"}
+          </p>
+        </div>
+      <div className="grid grid-cols-4 gap-2 text-[10px]">
+        <StatPill label="Backlog" value={boardStats.backlog} />
+        <StatPill label="Active" value={boardStats.active} />
+        <StatPill label="Review" value={boardStats.review} />
+        <StatPill label="Shipped" value={boardStats.shipped} />
+      </div>
+
     }
   };
 
@@ -352,6 +377,15 @@ export function KanbanPanel() {
 
       <div className="flex flex-1 flex-col gap-3 overflow-y-auto pr-1">
         {COLUMNS.map((col) => {
+function StatPill({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded border border-zinc-900 bg-zinc-950/70 px-2 py-1">
+      <div className="font-mono uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="text-xs font-semibold text-zinc-200">{value}</div>
+    </div>
+  );
+}
+
           const items = tasks.filter((c) => c.column === col.id);
           const isDropTarget = dragOverColumn === col.id;
           return (

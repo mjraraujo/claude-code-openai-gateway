@@ -192,6 +192,26 @@ export function AmigosPanel() {
     () => groupByFeature(visibleReport?.scenarios ?? []),
     [visibleReport],
   );
+  const severitySummary = useMemo(() => {
+    const scenarios = visibleReport?.scenarios ?? [];
+    let blocker = 0;
+    let concern = 0;
+    let info = 0;
+    const scenariosWithBlockers = new Set<string>();
+    for (const scenario of scenarios) {
+      for (const finding of scenario.findings) {
+        if (finding.severity === "blocker") {
+          blocker += 1;
+          scenariosWithBlockers.add(`${scenario.featurePath}::${scenario.scenarioId}`);
+        } else if (finding.severity === "concern") {
+          concern += 1;
+        } else {
+          info += 1;
+        }
+      }
+    }
+    return { blocker, concern, info, impactedScenarios: scenariosWithBlockers.size };
+  }, [visibleReport]);
 
   const toggleFeature = useCallback((path: string) => {
     setExpanded((prev) => ({ ...prev, [path]: !prev[path] }));
@@ -231,6 +251,19 @@ export function AmigosPanel() {
       {/* Verdict summary strip */}
       {visibleReport ? (
         <SummaryStrip report={visibleReport} running={!!running} />
+      ) : null}
+      {visibleReport ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-900 bg-black px-3 py-1.5 text-[10px]">
+          <span className="text-red-300">{severitySummary.blocker} blockers</span>
+          <span className="text-amber-300">{severitySummary.concern} concerns</span>
+          <span className="text-zinc-400">{severitySummary.info} notes</span>
+          <span className="ml-auto text-zinc-500">
+            delivery readiness:{" "}
+            {severitySummary.blocker > 0
+              ? `${severitySummary.impactedScenarios} scenarios blocked`
+              : "clear to implement"}
+          </span>
+        </div>
       ) : null}
 
       {error ? (

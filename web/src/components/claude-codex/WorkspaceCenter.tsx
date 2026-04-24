@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
-
+  { id: "workspace", label: "Workspace Hub" },
+  { id: "amigos", label: "Amigos Review" },
 import { AmigosPanel } from "./AmigosPanel";
 import { BrowserView } from "./BrowserView";
 import { SideBySideView } from "./SideBySideView";

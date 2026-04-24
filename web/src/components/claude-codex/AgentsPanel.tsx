@@ -45,6 +45,13 @@ export function AgentsPanel() {
     const es = new EventSource("/api/runtime/state");
     es.addEventListener("state", (ev) => {
       try {
+  const operationalStats = useMemo(() => {
+    const active = agents.filter((agent) => agent.status === "active").length;
+    const blocked = agents.filter((agent) => agent.status === "blocked").length;
+    const idle = agents.length - active - blocked;
+    const withDepartment = agents.filter((agent) => !!agent.department).length;
+    return { active, blocked, idle, withDepartment };
+  }, [agents]);
         setState(JSON.parse((ev as MessageEvent).data) as RuntimeState);
       } catch {
         /* ignore */
@@ -101,6 +108,25 @@ export function AgentsPanel() {
         setError((err as Error).message);
       }
     },
+        <div className="rounded-md border border-zinc-900 bg-zinc-950/60 p-2.5">
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
+            team reality
+          </div>
+          <div className="mt-1 grid grid-cols-2 gap-1 text-[10px]">
+            <InlineStat label="active" value={operationalStats.active} tone="text-emerald-300" />
+            <InlineStat label="blocked" value={operationalStats.blocked} tone="text-red-300" />
+            <InlineStat label="idle" value={operationalStats.idle} />
+            <InlineStat
+              label="in departments"
+              value={`${operationalStats.withDepartment}/${agents.length || 0}`}
+            />
+          </div>
+          <p className="mt-1 text-[10px] text-zinc-500">
+            {currentRun
+              ? `Auto-drive engaged (${currentRun.mode ?? "bounded"} mode)`
+              : "Auto-drive disengaged"}
+          </p>
+        </div>
     [],
   );
 
@@ -429,6 +455,23 @@ export function AgentsPanel() {
           onError={setError}
         />
       )}
+
+function InlineStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded border border-zinc-900 bg-black/40 px-1.5 py-1">
+      <div className="font-mono uppercase text-zinc-600">{label}</div>
+      <div className={`text-xs ${tone ?? "text-zinc-300"}`}>{value}</div>
+    </div>
+  );
+}
 
       {showAddAgent && (
         <AgentEditorModal
