@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ApiError, useRuntimeState, workspaceClient } from "@/lib/runtime/client";
 import type { RuntimeState } from "@/lib/runtime";
 
 interface StatusResponse {
@@ -42,7 +43,7 @@ function detectGpu(): GpuState {
 
 export function StatusBar() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [runtime, setRuntime] = useState<RuntimeState | null>(null);
+  const runtime = useRuntimeState();
   const [reauthOpen, setReauthOpen] = useState(false);
   const [gpu, setGpu] = useState<GpuState>("checking");
 
@@ -66,18 +67,6 @@ export function StatusBar() {
     const id = setInterval(fetchStatus, 30_000);
     return () => clearInterval(id);
   }, [fetchStatus]);
-
-  useEffect(() => {
-    const es = new EventSource("/api/runtime/state");
-    es.addEventListener("state", (ev) => {
-      try {
-        setRuntime(JSON.parse((ev as MessageEvent).data) as RuntimeState);
-      } catch {
-        /* ignore */
-      }
-    });
-    return () => es.close();
-  }, []);
 
   const onLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -257,11 +246,7 @@ function WorkspaceSwitcher({ runtime }: { runtime: RuntimeState | null }) {
 
   const activate = useCallback(async (id: string) => {
     try {
-      await fetch(`/api/runtime/workspaces/${encodeURIComponent(id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ activate: true }),
-      });
+      await workspaceClient.activate(id);
     } catch {
       /* ignore — SSE will reconcile or the next click retries */
     }
@@ -274,20 +259,12 @@ function WorkspaceSwitcher({ runtime }: { runtime: RuntimeState | null }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/runtime/workspaces", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed, activate: true }),
-      });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error || `failed (${res.status})`);
-      }
+      await workspaceClient.create({ name: trimmed, activate: true });
       setName("");
       setCreating(false);
       setOpen(false);
     } catch (err) {
-      setError((err as Error).message);
+      setError(err instanceof ApiError ? err.message : (err as Error).message);
     } finally {
       setBusy(false);
     }

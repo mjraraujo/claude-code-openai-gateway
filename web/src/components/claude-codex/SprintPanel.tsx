@@ -8,24 +8,10 @@
  * `/sprints` route has something to render.
  */
 
-import { useEffect, useState } from "react";
-
-import type { RuntimeState } from "@/lib/runtime";
+import { useRuntimeState } from "@/lib/runtime/client";
 
 export function SprintPanel() {
-  const [state, setState] = useState<RuntimeState | null>(null);
-
-  useEffect(() => {
-    const es = new EventSource("/api/runtime/state");
-    es.addEventListener("state", (ev) => {
-      try {
-        setState(JSON.parse((ev as MessageEvent).data) as RuntimeState);
-      } catch {
-        /* ignore */
-      }
-    });
-    return () => es.close();
-  }, []);
+  const state = useRuntimeState();
 
   if (!state) {
     return (

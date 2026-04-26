@@ -12,13 +12,16 @@
  */
 
 import { KanbanPanel } from "@/components/claude-codex/KanbanPanel";
+import { RuntimeProvider } from "@/lib/runtime/client";
 
 export const dynamic = "force-dynamic";
 
 export default function BoardPage() {
   return (
-    <main className="h-screen w-screen bg-black text-zinc-100">
-      <KanbanPanel />
-    </main>
+    <RuntimeProvider>
+      <main className="h-screen w-screen bg-black text-zinc-100">
+        <KanbanPanel />
+      </main>
+    </RuntimeProvider>
   );
 }

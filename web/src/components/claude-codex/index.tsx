@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { useBreakpoint } from "@/lib/hooks/useBreakpoint";
+import { RuntimeProvider } from "@/lib/runtime/client";
 
 import { AgentsPanel } from "./AgentsPanel";
 import { ChatDock } from "./ChatDock";
@@ -27,6 +28,11 @@ import { type RightTab } from "./navigationState";
  *                 | Terminal bottom (resizable)   |
  *
  * The MobileShell (single-pane bottom-tab nav) is unchanged at < lg.
+ *
+ * Both shells render inside `RuntimeProvider` (single shared SSE
+ * subscription to `/api/runtime/state`) and `NavigationStateProvider`
+ * (cross-shell tab state), so panels never spin up their own
+ * `EventSource` and tab choice survives breakpoint flips/reloads.
  *
  * All split sizes and collapsed flags persist to localStorage under
  * the namespaced keys below so the layout survives reloads.
@@ -92,9 +98,17 @@ function writeStorage(key: string, value: string) {
 }
 
 export function ClaudeCodex() {
+  return (
+    <RuntimeProvider>
       <NavigationStateProvider>
         <ClaudeCodexShell />
       </NavigationStateProvider>
+    </RuntimeProvider>
+  );
+}
+
+function ClaudeCodexShell() {
+  // Below the lg (1024px) breakpoint we hand off to the single-pane
   // bottom-tab shell so the dashboard is usable on phones and small
   // tablets. The desktop resizable shell only renders at >=lg.
   const bp = useBreakpoint();
@@ -116,7 +130,7 @@ function DesktopShell() {
   const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false);
   const [rightSize, setRightSize] = useState<number>(DEFAULTS.rightSize);
   const [rightCollapsed, setRightCollapsed] = useState<boolean>(false);
-  const { state: navState, setRightTab: setNavRightTab } = useNavigationStateContext();
+  const { state: navState, setRightTab } = useNavigationStateContext();
   const rightTab = navState.rightTab;
   const [workspaceHeight, setWorkspaceHeight] = useState<number>(
     DEFAULTS.workspaceHeight,
@@ -184,9 +198,12 @@ function DesktopShell() {
       return next;
     });
   }, []);
-  const selectRightTab = useCallback((tab: RightTab) => {
-    setNavRightTab(tab);
-  }, [setNavRightTab]);
+  const selectRightTab = useCallback(
+    (tab: RightTab) => {
+      setRightTab(tab);
+    },
+    [setRightTab],
+  );
 
   const left = leftCollapsed ? (
     <CollapsedRail label="Tasks · Sprint" onExpand={toggleLeft} side="left" />
@@ -501,4 +518,3 @@ function CollapsedRail({
     </button>
   );
 }
-

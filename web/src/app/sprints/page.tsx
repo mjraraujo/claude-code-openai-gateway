@@ -3,13 +3,16 @@
  */
 
 import { SprintPanel } from "@/components/claude-codex/SprintPanel";
+import { RuntimeProvider } from "@/lib/runtime/client";
 
 export const dynamic = "force-dynamic";
 
 export default function SprintsPage() {
   return (
-    <main className="h-screen w-screen bg-black text-zinc-100">
-      <SprintPanel />
-    </main>
+    <RuntimeProvider>
+      <main className="h-screen w-screen bg-black text-zinc-100">
+        <SprintPanel />
+      </main>
+    </RuntimeProvider>
   );
 }

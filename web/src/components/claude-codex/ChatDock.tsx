@@ -29,7 +29,7 @@ import {
   useState,
 } from "react";
 
-import type { RuntimeState } from "@/lib/runtime";
+import { useRuntimeSelector } from "@/lib/runtime/client";
 import { DEFAULT_MODEL_ID } from "@/lib/runtime/models";
 
 interface ChatTurn {
@@ -54,7 +54,10 @@ export function ChatDock() {
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [model, setModel] = useState<string>(DEFAULT_MODEL_ID);
+  // Model is read from the shared runtime store (Agents panel writes
+  // it via PATCH /api/runtime/harness). Using `useRuntimeSelector`
+  // keeps the value in sync without a per-panel EventSource.
+  const model = useRuntimeSelector((s) => s?.harness?.model ?? DEFAULT_MODEL_ID);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   /**
    * When true, chat goes through the tool-calling agent loop
@@ -69,25 +72,16 @@ export function ChatDock() {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  // Mirror of `turns` accessible synchronously inside `send` so two
+  // rapid sends can't both build their history snapshot from the same
+  // pre-mutation `turns` value (diagnostic bug #1: stale-state send
+  // race in ChatDock). Initialised lazily from the same default the
+  // useState above seeded so the first `send` sees the system turn.
+  const turnsRef = useRef<ChatTurn[]>(turns);
 
   // Subscribe to runtime state to keep the model in sync with whatever
-  // the Agents panel selected. Same SSE source as the rest of Mission
-  // Control.
-  useEffect(() => {
-    const es = new EventSource("/api/runtime/state");
-    es.addEventListener("state", (ev) => {
-      try {
-        const next = JSON.parse((ev as MessageEvent).data) as RuntimeState;
-        if (next?.harness?.model) setModel(next.harness.model);
-      } catch {
-        /* ignore */
-      }
-    });
-    es.onerror = () => {
-      // EventSource auto-reconnects.
-    };
-    return () => es.close();
-  }, []);
+  // the Agents panel selected. Same shared SSE subscription as the
+  // rest of the dashboard — see `RuntimeProvider`.
 
   // Best-effort: discover the workspace root from the existing tree
   // endpoint so we can mention it in the system prompt. Failures are
@@ -117,13 +111,19 @@ export function ChatDock() {
     const id = turnId.current++;
     setTurns((prev) => {
       const next = prev.concat({ ...turn, id });
-      return next.length > MAX_TURNS ? next.slice(next.length - MAX_TURNS) : next;
+      const trimmed = next.length > MAX_TURNS ? next.slice(next.length - MAX_TURNS) : next;
+      turnsRef.current = trimmed;
+      return trimmed;
     });
     return id;
   }, []);
 
   const patch = useCallback((id: number, patcher: (t: ChatTurn) => ChatTurn) => {
-    setTurns((prev) => prev.map((t) => (t.id === id ? patcher(t) : t)));
+    setTurns((prev) => {
+      const next = prev.map((t) => (t.id === id ? patcher(t) : t));
+      turnsRef.current = next;
+      return next;
+    });
   }, []);
 
   const cancel = useCallback(() => {
@@ -138,9 +138,13 @@ export function ChatDock() {
       if (!trimmed || sending) return;
       setInput("");
 
-      // Snapshot the conversation we'll send before mutating state so
-      // we don't include the assistant placeholder we're about to add.
-      const history = turns
+      // Snapshot the conversation we'll send. Read from `turnsRef`
+      // instead of the `turns` closure so a rapid second call (or any
+      // intervening setTurns) doesn't see stale history (diagnostic
+      // bug #1). The `sending` guard above already prevents true
+      // concurrent sends; the ref guards against stale-closure reads
+      // when this callback is invoked from useCallback memoization.
+      const history = turnsRef.current
         .filter((t) => t.role === "user" || t.role === "assistant")
         .map((t) => ({ role: t.role as "user" | "assistant", content: t.content }))
         .concat({ role: "user", content: trimmed });
@@ -276,7 +280,7 @@ export function ChatDock() {
         setSending(false);
       }
     },
-    [append, model, patch, sending, toolsEnabled, turns, workspaceRoot],
+    [append, model, patch, sending, toolsEnabled, workspaceRoot],
   );
 
   const onKeyDown = useCallback(
@@ -293,13 +297,15 @@ export function ChatDock() {
 
   const clear = useCallback(() => {
     cancel();
-    setTurns([
+    const fresh: ChatTurn[] = [
       {
         id: turnId.current++,
         role: "system",
         content: "Conversation cleared.",
       },
-    ]);
+    ];
+    setTurns(fresh);
+    turnsRef.current = fresh;
   }, [cancel]);
 
   return (
