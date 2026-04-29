@@ -41,7 +41,7 @@ jobs:
 
       - name: Compute image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           # GHCR requires the image name to be lowercase. github.repository
           # is already lowercase for this repo, but we normalise defensively.
