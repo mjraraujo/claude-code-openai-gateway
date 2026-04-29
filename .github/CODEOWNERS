@@ -1,0 +1,32 @@
+# CODEOWNERS — maps file paths to required reviewers.
+# Every PR touching these paths requires approval from the listed owners
+# before merge is allowed (enforces GitHub branch protection).
+#
+# Syntax: <pattern>  @owner1 @owner2
+# Listed owners: @mjraraujo is the primary maintainer.
+# Add GitHub team handles (@org/team) or more users as the team grows.
+
+# Global fallback — every file needs at least the primary maintainer.
+*                                @mjraraujo
+
+# CI/CD and DevOps configuration — DevOps Senior owns these.
+# Update this with the GitHub account for the DevOps agent when available.
+.github/                         @mjraraujo
+.github/workflows/               @mjraraujo
+Dockerfile                       @mjraraujo
+docker/                          @mjraraujo
+docker-compose.yml               @mjraraujo
+fly.toml                         @mjraraujo
+k8s/                             @mjraraujo
+
+# Core gateway logic — CTO/primary maintainer.
+bin/                             @mjraraujo
+legacy/                          @mjraraujo
+
+# Web dashboard — frontend owners.
+web/                             @mjraraujo
+web/src/                         @mjraraujo
+
+# Documentation — any owner can review.
+*.md                             @mjraraujo
+web/docs/                        @mjraraujo
