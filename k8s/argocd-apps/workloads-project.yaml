@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: workloads
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Demo and product workloads managed by GitOps
+  sourceRepos:
+    - "${GIT_REPO_URL}"
+  destinations:
+    - namespace: sample-app-dev
+      server: https://kubernetes.default.svc
+    - namespace: sample-app-staging
+      server: https://kubernetes.default.svc
+    - namespace: sample-app-prod
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

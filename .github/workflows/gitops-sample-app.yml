@@ -1,0 +1,75 @@
+name: GitOps Sample App Delivery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/sample-app/**"
+      - ".github/workflows/gitops-sample-app.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Overlay to update after image push"
+        required: true
+        default: dev
+        type: choice
+        options: [dev, staging, prod]
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  SERVICE: sample-app
+
+jobs:
+  build-push-and-update-gitops:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_ENV: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+      ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[format('AWS_ROLE_ARN_{0}', upper(env.TARGET_ENV))] }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          docker build -t "$ECR_REGISTRY/$SERVICE:$IMAGE_TAG" services/$SERVICE
+          docker push "$ECR_REGISTRY/$SERVICE:$IMAGE_TAG"
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+      - name: Update GitOps overlay image tag
+        env:
+          KUSTOMIZATION_FILE: k8s/apps/sample-app/overlays/${{ env.TARGET_ENV }}/kustomization.yaml
+        run: |
+          sed -i -E "s#newName: .*sample-app#newName: $ECR_REGISTRY/$SERVICE#" "$KUSTOMIZATION_FILE"
+          sed -i -E "s#newTag: .*#newTag: $IMAGE_TAG#" "$KUSTOMIZATION_FILE"
+
+      - name: Commit and push GitOps change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- k8s/apps/sample-app/overlays/${TARGET_ENV}/kustomization.yaml; then
+            echo "No GitOps manifest changes detected"
+            exit 0
+          fi
+
+          git add k8s/apps/sample-app/overlays/${TARGET_ENV}/kustomization.yaml
+          git commit -m "chore(sample-app): promote ${TARGET_ENV} to ${IMAGE_TAG}"
+          git push
