@@ -1,0 +1,109 @@
+name: Deploy
+
+# Staging: triggered on every push to main (after CI passes).
+# Production: triggered on every semver tag push (v*.*.*).
+#
+# Required secrets (set in repo/org settings):
+#   FLY_API_TOKEN_STAGING  — Fly.io token scoped to the staging app
+#   FLY_API_TOKEN_PROD     — Fly.io token scoped to the production app
+#
+# Required variables (set in repo/org settings):
+#   FLY_STAGING_APP        — Fly.io app name for staging (e.g. app-damp-cloud-3494-staging)
+#   FLY_PROD_APP           — Fly.io app name for production (e.g. app-damp-cloud-3494)
+#
+# Environments "staging" and "production" must exist in repo settings.
+# The production environment should have a manual approval gate configured.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [staging, production]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  # ── Deploy to staging (every main push) ────────────────────────────────
+  deploy-staging:
+    name: Deploy → staging
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment:
+      name: staging
+      url: https://${{ vars.FLY_STAGING_APP }}.fly.dev
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to staging
+        run: flyctl deploy --app ${{ vars.FLY_STAGING_APP }} --remote-only --strategy rolling
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_STAGING }}
+
+      - name: Smoke-test health endpoint
+        run: |
+          sleep 10
+          curl --fail --retry 5 --retry-delay 5 \
+            "https://${{ vars.FLY_STAGING_APP }}.fly.dev/api/auth/status" \
+          && echo "Health check passed" || (echo "Health check failed" && exit 1)
+
+  # ── Deploy to production (semver tags only) ────────────────────────────
+  deploy-production:
+    name: Deploy → production (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://${{ vars.FLY_PROD_APP }}.fly.dev
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to production
+        run: flyctl deploy --app ${{ vars.FLY_PROD_APP }} --remote-only --strategy rolling
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_PROD }}
+
+      - name: Smoke-test health endpoint
+        run: |
+          sleep 10
+          curl --fail --retry 5 --retry-delay 5 \
+            "https://${{ vars.FLY_PROD_APP }}.fly.dev/api/auth/status" \
+          && echo "Health check passed" || (echo "Health check failed" && exit 1)
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: context.ref.replace("refs/tags/", ""),
+              name: context.ref.replace("refs/tags/", ""),
+              generate_release_notes: true,
+              draft: false,
+              prerelease: context.ref.includes("-rc") || context.ref.includes("-beta"),
+            });
